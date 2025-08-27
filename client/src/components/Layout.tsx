@@ -29,7 +29,6 @@ export default function Layout({ children }: LayoutProps) {
     { id: "products", label: "Products", href: "/products" },
     { id: "categories", label: "Categories", href: "/products?category=all" },
     { id: "deals", label: "Deals", href: "/products?featured=true" },
-    { id: "profile", label: "Profile", href: "/profile" },
   ];
 
   const mobileMenuItems = [
@@ -62,7 +61,6 @@ export default function Layout({ children }: LayoutProps) {
     location.startsWith("/products") ? "products" :
     location.startsWith("/categories") ? "categories" :
     location.startsWith("/deals") ? "deals" :
-    location.startsWith("/profile") ? "profile" :
     "";
 
   return (
@@ -113,15 +111,20 @@ export default function Layout({ children }: LayoutProps) {
               {/* Cart */}
               <CartDrawer />
 
-              {/* User Account */}
-              <Button
-                variant="ghost"
-                size="icon"
-                className="p-2 hover:bg-secondary rounded-full transition-colors"
-                data-testid="button-user-account"
-              >
-                <User className="h-5 w-5" />
-              </Button>
+              {/* Profile */}
+              <Link href="/profile">
+                <Button
+                  variant="ghost"
+                  size="icon"
+                  className={cn(
+                    "p-2 hover:bg-secondary rounded-full transition-colors",
+                    location.startsWith("/profile") && "bg-accent/10 text-accent"
+                  )}
+                  data-testid="button-profile"
+                >
+                  <User className="h-5 w-5" />
+                </Button>
+              </Link>
 
               {/* Mobile Menu */}
               <div className="md:hidden">
