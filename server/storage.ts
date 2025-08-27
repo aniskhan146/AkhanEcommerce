@@ -121,7 +121,9 @@ export class MemStorage implements IStorage {
         inStock: true,
         featured: prod.featured || false,
         discount: prod.discount || 0,
-        badge: prod.badge || null
+        badge: prod.badge || null,
+        originalPrice: prod.originalPrice || null,
+        rating: prod.rating || "0"
       };
       this.products.set(product.id, product);
     });
@@ -179,7 +181,10 @@ export class MemStorage implements IStorage {
       id,
       inStock: insertProduct.inStock ?? true,
       featured: insertProduct.featured ?? false,
-      discount: insertProduct.discount ?? 0
+      discount: insertProduct.discount ?? 0,
+      originalPrice: insertProduct.originalPrice ?? null,
+      rating: insertProduct.rating ?? "0",
+      badge: insertProduct.badge ?? null
     };
     this.products.set(id, product);
     return product;
@@ -204,7 +209,7 @@ export class MemStorage implements IStorage {
 
     if (existingItem) {
       // Update quantity
-      existingItem.quantity += insertItem.quantity;
+      existingItem.quantity += insertItem.quantity || 1;
       this.cartItems.set(existingItem.id, existingItem);
       return existingItem;
     }
@@ -213,6 +218,7 @@ export class MemStorage implements IStorage {
     const cartItem: CartItem = { 
       ...insertItem, 
       id,
+      quantity: insertItem.quantity || 1,
       createdAt: new Date()
     };
     this.cartItems.set(id, cartItem);

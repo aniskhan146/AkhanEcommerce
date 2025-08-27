@@ -29,7 +29,7 @@ export default function Products() {
   }, [location]);
 
   const { data: products = [], isLoading: productsLoading } = useQuery<Product[]>({
-    queryKey: ["/api/products", { category: selectedCategory, search: searchTerm }],
+    queryKey: ["/api/products", selectedCategory, searchTerm],
     queryFn: async () => {
       const params = new URLSearchParams();
       if (selectedCategory) params.append("category", selectedCategory);
@@ -76,7 +76,7 @@ export default function Products() {
       case "name":
         return a.name.localeCompare(b.name);
       case "rating":
-        return parseFloat(b.rating) - parseFloat(a.rating);
+        return parseFloat(b.rating || "0") - parseFloat(a.rating || "0");
       default:
         return 0;
     }

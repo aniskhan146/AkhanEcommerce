@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useRef } from "react";
 import { cn } from "../lib/utils";
-import { Input, InputProps  } from "./ui/input";
+import { Input } from "./ui/input";
 import { Label } from "./ui/label";
 import { Eye, EyeOff, Check, X } from "lucide-react";
 
@@ -55,7 +55,7 @@ export interface PasswordStrengthIndicatorProps {
   /**
    * Additional props for the input element
    */
-  inputProps?: InputProps;
+  inputProps?: React.ComponentPropsWithoutRef<typeof Input>;
 }
 
 // Password strength calculation based on common rules
