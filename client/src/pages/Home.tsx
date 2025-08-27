@@ -12,14 +12,12 @@ import { cn } from "@/lib/utils";
 export default function Home() {
   const { addToCart, isAddingToCart } = useCart();
 
-  const { data: featuredProducts = [], isLoading: productsLoading } = useQuery<Product[]>({
-    queryKey: ["/api/products", "featured", "true"],
-    queryFn: async () => {
-      const response = await fetch("/api/products?featured=true");
-      if (!response.ok) throw new Error("Failed to fetch featured products");
-      return response.json();
-    },
+  const { data: allProducts = [], isLoading: productsLoading } = useQuery<Product[]>({
+    queryKey: ["/api/products"],
   });
+
+  // Select only 6 featured products for home page
+  const featuredProducts = allProducts.slice(0, 6);
 
   const { data: categories = [], isLoading: categoriesLoading } = useQuery<Category[]>({
     queryKey: ["/api/categories"],
@@ -115,8 +113,8 @@ export default function Home() {
         <div className="container mx-auto px-4">
           <div className="flex justify-between items-center mb-12">
             <div>
-              <h2 className="text-4xl font-bold mb-4">Featured Products</h2>
-              <p className="text-xl text-muted-foreground">Handpicked items just for you</p>
+              <h2 className="text-4xl font-bold mb-4">Selected Products</h2>
+              <p className="text-xl text-muted-foreground">Handpicked premium items for you</p>
             </div>
             
             <Link href="/products">

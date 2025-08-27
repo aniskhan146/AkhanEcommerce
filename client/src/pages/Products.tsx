@@ -80,7 +80,8 @@ export default function Products() {
         return parseFloat(b.rating || "0") - parseFloat(a.rating || "0");
       case "default":
       default:
-        return 0;
+        // Random order for default
+        return Math.random() - 0.5;
     }
   });
 
@@ -89,13 +90,13 @@ export default function Products() {
       <div className="container mx-auto px-4 py-8">
         {/* Header */}
         <div className="mb-8">
-          <h1 className="text-4xl font-bold mb-4">Products</h1>
+          <h1 className="text-4xl font-bold mb-4">All Products</h1>
           <p className="text-xl text-muted-foreground">
             {selectedCategory
               ? `Browse ${selectedCategory} products`
               : searchTerm
               ? `Search results for "${searchTerm}"`
-              : "Discover our complete product catalog"}
+              : "Discover our complete product catalog in random order"}
           </p>
         </div>
 
