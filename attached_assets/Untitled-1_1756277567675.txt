@@ -1,0 +1,5824 @@
+"use client";
+import { useEffect, useRef } from "react";
+
+const vertexShaderSource = `
+  attribute vec4 a_position;
+  void main() {
+    gl_Position = a_position;
+  }
+`;
+
+const fragmentShaderSource = `
+precision mediump float;
+
+uniform vec2 iResolution;
+uniform float iTime;
+
+void mainImage(out vec4 fragColor, in vec2 fragCoord) {
+    vec2 uv = (2.0 * fragCoord - iResolution.xy) / min(iResolution.x, iResolution.y);
+
+    for(float i = 1.0; i < 8.0; i++) {
+        uv.y += i * 0.1 / i * 
+            sin(uv.x * i * i + iTime * 0.5) * sin(uv.y * i * i + iTime * 0.5);
+    }
+
+    vec3 col;
+    col.r = uv.y - 0.1;
+    col.g = uv.y + 0.3;
+    col.b = uv.y + 0.95;
+
+    fragColor = vec4(col, 1.0);
+}
+
+void main() {
+    mainImage(gl_FragColor, gl_FragCoord.xy);
+}
+`;
+
+export type BlurSize = "none" | "sm" | "md" | "lg" | "xl" | "2xl" | "3xl";
+
+interface WaveBackgroundProps {
+  backdropBlurAmount?: BlurSize;
+  className?: string;
+}
+
+const blurClassMap: Record<BlurSize, string> = {
+  none: "backdrop-blur-none",
+  sm: "backdrop-blur-sm",
+  md: "backdrop-blur-md",
+  lg: "backdrop-blur-lg",
+  xl: "backdrop-blur-xl",
+  "2xl": "backdrop-blur-2xl",
+  "3xl": "backdrop-blur-3xl",
+};
+
+function WaveBackground({
+  backdropBlurAmount = "sm",
+  className = "",
+}: WaveBackgroundProps): JSX.Element {
+  const canvasRef = useRef<HTMLCanvasElement>(null);
+
+  useEffect(() => {
+    const canvas = canvasRef.current;
+    if (!canvas) return;
+
+    const gl = canvas.getContext("webgl");
+    if (!gl) {
+      console.error("WebGL not supported");
+      return;
+    }
+
+    const compileShader = (type: number, source: string): WebGLShader | null => {
+      const shader = gl.createShader(type);
+      if (!shader) return null;
+      gl.shaderSource(shader, source);
+      gl.compileShader(shader);
+      if (!gl.getShaderParameter(shader, gl.COMPILE_STATUS)) {
+        console.error("Shader compilation error:", gl.getShaderInfoLog(shader));
+        gl.deleteShader(shader);
+        return null;
+      }
+      return shader;
+    };
+
+    const vertexShader = compileShader(gl.VERTEX_SHADER, vertexShaderSource);
+    const fragmentShader = compileShader(gl.FRAGMENT_SHADER, fragmentShaderSource);
+    if (!vertexShader || !fragmentShader) return;
+
+    const program = gl.createProgram();
+    if (!program) return;
+    gl.attachShader(program, vertexShader);
+    gl.attachShader(program, fragmentShader);
+    gl.linkProgram(program);
+
+    if (!gl.getProgramParameter(program, gl.LINK_STATUS)) {
+      console.error("Program linking error:", gl.getProgramInfoLog(program));
+      return;
+    }
+
+    gl.useProgram(program);
+
+    const positionBuffer = gl.createBuffer();
+    gl.bindBuffer(gl.ARRAY_BUFFER, positionBuffer);
+    gl.bufferData(
+      gl.ARRAY_BUFFER,
+      new Float32Array([-1, -1, 1, -1, -1, 1, -1, 1, 1, -1, 1, 1]),
+      gl.STATIC_DRAW
+    );
+
+    const positionLocation = gl.getAttribLocation(program, "a_position");
+    gl.enableVertexAttribArray(positionLocation);
+    gl.vertexAttribPointer(positionLocation, 2, gl.FLOAT, false, 0, 0);
+
+    const iResolutionLocation = gl.getUniformLocation(program, "iResolution");
+    const iTimeLocation = gl.getUniformLocation(program, "iTime");
+
+    let startTime = Date.now();
+
+    const render = () => {
+      const width = canvas.clientWidth;
+      const height = canvas.clientHeight;
+      canvas.width = width;
+      canvas.height = height;
+      gl.viewport(0, 0, width, height);
+
+      const currentTime = (Date.now() - startTime) / 1000;
+
+      gl.uniform2f(iResolutionLocation, width, height);
+      gl.uniform1f(iTimeLocation, currentTime);
+
+      gl.drawArrays(gl.TRIANGLES, 0, 6);
+      requestAnimationFrame(render);
+    };
+
+    render();
+  }, []);
+
+  const finalBlurClass = blurClassMap[backdropBlurAmount] || blurClassMap["sm"];
+
+  return (
+    <div className={`w-full max-w-screen h-full overflow-hidden ${className}`}>
+      <canvas
+        ref={canvasRef}
+        className="absolute inset-0 w-full max-w-screen h-full overflow-hidden"
+        style={{ display: "block" }}
+      />
+      <div className={`absolute inset-0 ${finalBlurClass}`} />
+    </div>
+  );
+}
+
+export default WaveBackground;
+
+
+
+
+
+
+
+"use client";
+
+import {
+  motion,
+  useMotionValue,
+  useSpring,
+  useTransform,
+  AnimatePresence,
+  MotionValue,
+} from "framer-motion";
+import { useEffect, useMemo, useRef, useState } from "react";
+
+function useDockItemSize(
+  mouseX: MotionValue<number>,
+  baseItemSize: number,
+  magnification: number,
+  distance: number,
+  ref: React.RefObject<HTMLDivElement>,
+  spring: { mass: number; stiffness: number; damping: number }
+) {
+  const mouseDistance = useTransform(mouseX, (val) => {
+    if (typeof val !== "number" || isNaN(val)) return 0;
+    const rect = ref.current?.getBoundingClientRect() ?? {
+      x: 0,
+      width: baseItemSize,
+    };
+    return val - rect.x - baseItemSize / 2;
+  });
+
+  const targetSize = useTransform(
+    mouseDistance,
+    [-distance, 0, distance],
+    [baseItemSize, magnification, baseItemSize]
+  );
+
+  return useSpring(targetSize, spring);
+}
+
+interface DockItemProps {
+  icon: React.ReactNode;
+  label: string;
+  onClick: () => void;
+  mouseX: MotionValue<number>;
+  baseItemSize: number;
+  magnification: number;
+  distance: number;
+  spring: { mass: number; stiffness: number; damping: number };
+  badgeCount?: number;
+}
+
+function DockItem({
+  icon,
+  label,
+  onClick,
+  mouseX,
+  baseItemSize,
+  magnification,
+  distance,
+  spring,
+  badgeCount,
+}: DockItemProps) {
+  const ref = useRef<HTMLDivElement>(null);
+  const isHovered = useMotionValue(0);
+  const size = useDockItemSize(
+    mouseX,
+    baseItemSize,
+    magnification,
+    distance,
+    ref,
+    spring
+  );
+  const [showLabel, setShowLabel] = useState(false);
+
+  useEffect(() => {
+    const unsubscribe = isHovered.on("change", (value) =>
+      setShowLabel(value === 1)
+    );
+    return () => unsubscribe();
+  }, [isHovered]);
+
+  return (
+    <motion.div
+      ref={ref}
+      style={{ width: size, height: size }}
+      onHoverStart={() => isHovered.set(1)}
+      onHoverEnd={() => isHovered.set(0)}
+      onFocus={() => isHovered.set(1)}
+      onBlur={() => isHovered.set(0)}
+      onClick={onClick}
+      className="relative inline-flex items-center justify-center rounded-full 
+      bg-background    shadow-md  "
+      tabIndex={0}
+      role="button"
+      aria-haspopup="true"
+    >
+      <div className="flex items-center justify-center">{icon}</div>
+      {badgeCount !== undefined && badgeCount > 0 && (
+        <span className="absolute -top-2 -right-2 flex items-center justify-center w-5 h-5 text-xs font-bold text-white bg-red-500 rounded-full">
+          {badgeCount > 99 ? "99+" : badgeCount}
+        </span>
+      )}
+      <AnimatePresence>
+        {showLabel && (
+          <motion.div
+            initial={{ opacity: 0, y: 0 }}
+            animate={{ opacity: 1, y: -10 }}
+            exit={{ opacity: 0, y: 0 }}
+            transition={{ duration: 0.2 }}
+            className="absolute -top-6 left-1/2 w-fit whitespace-pre rounded-md 
+            border border   bg-[#060606] px-2 py-0.5 text-xs text-white"
+            style={{ x: "-50%" }}
+            role="tooltip"
+          >
+            {label}
+          </motion.div>
+        )}
+      </AnimatePresence>
+    </motion.div>
+  );
+}
+
+interface DockItem {
+  icon: React.ReactNode;
+  label: string;
+  onClick: () => void;
+  badgeCount?: number;
+}
+
+interface DockProps {
+  items: DockItem[];
+  className?: string;
+  spring?: { mass: number; stiffness: number; damping: number };
+  magnification?: number;
+  distance?: number;
+  panelHeight?: number;
+  dockHeight?: number;
+  baseItemSize?: number;
+  position?: "bottom" | "top";
+}
+
+import React, { useEffect, useRef, useState } from "react";
+import { cn } from "../lib/utils";
+
+export interface DynamicNavigationProps {
+  /** Navigation links */
+  links: {
+    id: string;
+    label: string;
+    href: string;
+    icon?: React.ReactNode;
+  }[];
+  /** Background color */
+  backgroundColor?: string;
+  /** Text color */
+  textColor?: string;
+  /** Highlight color */
+  highlightColor?: string;
+  /** Glow effect intensity (0-10) */
+  glowIntensity?: number;
+  /** CSS class name */
+  className?: string;
+  /** Whether to show labels on mobile */
+  showLabelsOnMobile?: boolean;
+  /** Callback when a link is clicked */
+  onLinkClick?: (id: string) => void;
+  /** Initially active link ID */
+  activeLink?: string;
+  /** Enable ripple effect on click */
+  enableRipple?: boolean;
+}
+
+export const DynamicNavigation = ({
+  links,
+  backgroundColor,
+  textColor,
+  highlightColor,
+  glowIntensity = 5,
+  className,
+  showLabelsOnMobile = false,
+  onLinkClick,
+  activeLink,
+  enableRipple = true,
+}: DynamicNavigationProps) => {
+  const navRef = useRef<HTMLElement>(null);
+  const highlightRef = useRef<HTMLDivElement>(null);
+  const [active, setActive] = useState<string | null>(
+    activeLink || (links.length > 0 ? links[0].id : null)
+  );
+
+  // Directly define the default black and white theme styles
+  const defaultThemeStyles = {
+    bg: backgroundColor || "bg-background", // Use provided or default black
+    border: "border",
+    text: textColor || "text-foreground", // Use provided or default white
+    highlight: highlightColor || "bg-foreground/10", // Use provided or default white/10
+    glow: `shadow-[0_0_${glowIntensity}px_rgba(255,255,255,0.3)]`,
+  };
+
+  // Update highlight position based on active link
+  const updateHighlightPosition = (id?: string) => {
+    if (!navRef.current || !highlightRef.current) return;
+
+    const linkElement = navRef.current.querySelector(
+      `#nav-item-${id || active}`
+    );
+    if (!linkElement) return;
+
+    const { left, width } = linkElement.getBoundingClientRect();
+    const navRect = navRef.current.getBoundingClientRect();
+
+    highlightRef.current.style.transform = `translateX(${
+      left - navRect.left
+    }px)`;
+    highlightRef.current.style.width = `${width}px`;
+  };
+
+  // Create ripple effect
+  const createRipple = (event: React.MouseEvent<HTMLAnchorElement>) => {
+    if (!enableRipple) return;
+
+    const button = event.currentTarget;
+    const circle = document.createElement("span");
+    const diameter = Math.max(button.clientWidth, button.clientHeight);
+
+    circle.style.width = circle.style.height = `${diameter}px`;
+    circle.style.left = `${
+      event.clientX - button.getBoundingClientRect().left - diameter / 2
+    }px`;
+    circle.style.top = `${
+      event.clientY - button.getBoundingClientRect().top - diameter / 2
+    }px`;
+    circle.classList.add(
+      "absolute",
+      "bg-white",
+      "rounded-full",
+      "pointer-events-none",
+      "opacity-30",
+      "animate-ripple"
+    );
+
+    const ripple = button.getElementsByClassName("ripple")[0];
+    if (ripple) {
+      ripple.remove();
+    }
+
+    button.appendChild(circle);
+    setTimeout(() => circle.remove(), 600);
+  };
+
+  // Handle link click
+  const handleLinkClick = (
+    id: string,
+    event: React.MouseEvent<HTMLAnchorElement>
+  ) => {
+    if (enableRipple) {
+      createRipple(event);
+    }
+    setActive(id);
+    if (onLinkClick) {
+      onLinkClick(id);
+    }
+  };
+
+  // Handle link hover
+  const handleLinkHover = (id: string) => {
+    if (!navRef.current || !highlightRef.current) return;
+    updateHighlightPosition(id);
+  };
+
+  // Set initial highlight position and update on window resize
+  useEffect(() => {
+    updateHighlightPosition();
+
+    const handleResize = () => {
+      updateHighlightPosition();
+    };
+
+    window.addEventListener("resize", handleResize);
+    return () => {
+      window.removeEventListener("resize", handleResize);
+    };
+  }, [active, links]);
+
+  // Update when active link changes externally
+  useEffect(() => {
+    if (activeLink && activeLink !== active) {
+      setActive(activeLink);
+    }
+  }, [activeLink]);
+
+  return (
+    <nav
+      ref={navRef}
+      className={cn(
+        `relative rounded-full  backdrop-blur-md border 
+        shadow-lg transition-all duration-300`,
+        defaultThemeStyles.bg,
+        defaultThemeStyles.border,
+        defaultThemeStyles.glow,
+        className
+      )}
+      style={{
+        backgroundColor: backgroundColor,
+        color: textColor,
+      }}
+    >
+      {/* Background highlight */}
+      <div
+        ref={highlightRef}
+        className={cn(
+          `absolute top-0 left-0 h-full rounded-full transition-all 
+          duration-300 ease-[cubic-bezier(0.25,1,0.5,1)] z-0`,
+          defaultThemeStyles.highlight
+        )}
+        style={{
+          backgroundColor: highlightColor,
+        }}
+      ></div>
+
+      <ul className="flex justify-between items-center gap-4 py-2 relative z-10">
+        {links.map((link) => (
+          <li
+            key={link.id}
+            className="flex-1 rounded-full mx-1 lg:mx-2 px-4"
+            id={`nav-item-${link.id}`}
+          >
+            <a
+              href={link.href}
+              className={cn(
+                `flex gap-1 items-center justify-center h-8 md:h-8 text-xs md:text-sm 
+                rounded-full font-medium transition-all duration-300 hover:scale-105 
+                relative overflow-hidden`,
+                defaultThemeStyles.text,
+                active === link.id && "font-semibold"
+              )}
+              onClick={(e) => {
+                e.preventDefault();
+                handleLinkClick(link.id, e);
+              }}
+              onMouseEnter={() => handleLinkHover(link.id)}
+            >
+              {link.icon && (
+                <span className="text-current text-xs ">
+                  {link.icon}
+                </span>
+              )}
+              <span
+                className={cn(showLabelsOnMobile ? "flex" : "hidden sm:flex")}
+              >
+                {link.label}
+              </span>
+            </a>
+          </li>
+        ))}
+      </ul>
+
+      <style
+        dangerouslySetInnerHTML={{
+          __html: `        @keyframes ripple {
+          to {
+            transform: scale(4);
+            opacity: 0;
+          }
+        }
+        .animate-ripple {
+          animation: ripple 0.6s linear;
+        }
+`,
+        }}
+      />
+    </nav>
+  );
+};
+
+export default DynamicNavigation;
+
+
+"use client";
+import React, { useState, useEffect, useRef } from "react";
+import { cn } from "../lib/utils";
+import { Menu, X } from "lucide-react";
+
+export interface MenuItem {
+  label: string;
+  href?: string;
+  onClick?: () => void;
+  icon?: React.ReactNode;
+}
+
+export interface HamburgerMenuOverlayProps {
+  /** Array of menu items */
+  items: MenuItem[];
+  /** Button position from top */
+  buttonTop?: string;
+  /** Button position from left */
+  buttonLeft?: string;
+  /** Button size */
+  buttonSize?: "sm" | "md" | "lg";
+  /** Button background color */
+  buttonColor?: string;
+  /** Overlay background color/gradient */
+  overlayBackground?: string;
+  /** Menu text color */
+  textColor?: string;
+  /** Menu font size */
+  fontSize?: "sm" | "md" | "lg" | "xl" | "2xl";
+  /** Font family */
+  fontFamily?: string;
+  /** Font weight */
+  fontWeight?: "normal" | "medium" | "semibold" | "bold";
+  /** Animation duration in seconds */
+  animationDuration?: number;
+  /** Stagger delay between menu items */
+  staggerDelay?: number;
+  /** Menu items alignment */
+  menuAlignment?: "left" | "center" | "right";
+  /** Custom class for container */
+  className?: string;
+  /** Custom class for button */
+  buttonClassName?: string;
+  /** Custom class for menu items */
+  menuItemClassName?: string;
+  /** Disable overlay close on item click */
+  keepOpenOnItemClick?: boolean;
+  /** Custom button content */
+  customButton?: React.ReactNode;
+  /** ARIA label for accessibility */
+  ariaLabel?: string;
+  /** Callback when menu opens */
+  onOpen?: () => void;
+  /** Callback when menu closes */
+  onClose?: () => void;
+  /** Menu items layout direction */
+  menuDirection?: "vertical" | "horizontal";
+  /** Enable blur backdrop */
+  enableBlur?: boolean;
+  /** Z-index for overlay */
+  zIndex?: number;
+}
+
+export const HamburgerMenuOverlay: React.FC<HamburgerMenuOverlayProps> = ({
+  items = [],
+  buttonTop = "60px",
+  buttonLeft = "60px",
+  buttonSize = "md",
+  buttonColor = "#6c8cff",
+  overlayBackground = "#6c8cff",
+  textColor = "#ffffff",
+  fontSize = "md",
+  fontFamily = '"Krona One", monospace',
+  fontWeight = "bold",
+  animationDuration = 1.5,
+  staggerDelay = 0.1,
+  menuAlignment = "left",
+  className,
+  buttonClassName,
+  menuItemClassName,
+  keepOpenOnItemClick = false,
+  customButton,
+  ariaLabel = "Navigation menu",
+  onOpen,
+  onClose,
+  menuDirection = "vertical",
+  enableBlur = false,
+  zIndex = 1000,
+}) => {
+  const [isOpen, setIsOpen] = useState(false);
+  const navRef = useRef<HTMLDivElement>(null);
+  const containerRef = useRef<HTMLDivElement>(null);
+
+  const buttonSizes = {
+    sm: "w-10 h-10",
+    md: "w-12 h-12",
+    lg: "w-16 h-16",
+  };
+
+  const fontSizes = {
+    sm: "text-2xl md:text-3xl",
+    md: "text-3xl md:text-4xl",
+    lg: "text-4xl md:text-5xl",
+    xl: "text-5xl md:text-6xl",
+    "2xl": "text-6xl md:text-7xl",
+  };
+
+  const toggleMenu = () => {
+    const newState = !isOpen;
+    setIsOpen(newState);
+
+    if (newState) {
+      onOpen?.();
+    } else {
+      onClose?.();
+    }
+  };
+
+  const handleItemClick = (item: MenuItem) => {
+    if (item.onClick) {
+      item.onClick();
+    }
+
+    if (item.href && !item.onClick) {
+      window.location.href = item.href;
+    }
+
+    if (!keepOpenOnItemClick) {
+      setIsOpen(false);
+      onClose?.();
+    }
+  };
+
+  // Close menu on escape key
+  useEffect(() => {
+    const handleEscape = (e: KeyboardEvent) => {
+      if (e.key === "Escape" && isOpen) {
+        setIsOpen(false);
+        onClose?.();
+      }
+    };
+
+    document.addEventListener("keydown", handleEscape);
+    return () => document.removeEventListener("keydown", handleEscape);
+  }, [isOpen, onClose]);
+
+  return (
+    <div ref={containerRef} className={cn("absolute w-full h-full", className)}>
+      <style>
+        {`
+          @import url('https://fonts.googleapis.com/css2?family=Krona+One:wght@400&display=swap');
+          
+          .hamburger-overlay-${zIndex} {
+            position: relative;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100vh;
+            display: flex;
+            justify-content: start;
+            align-items: center;
+            background: ${overlayBackground};
+            z-index: ${zIndex};
+            clip-path: circle(0px at ${buttonLeft} ${buttonTop});
+            transition: clip-path ${animationDuration}s cubic-bezier(0.25, 0.46, 0.45, 0.94);
+            ${enableBlur ? "backdrop-filter: blur(10px);" : ""}
+          }
+          
+          .hamburger-overlay-${zIndex}.open {
+            clip-path: circle(150% at ${buttonLeft} ${buttonTop});
+          }
+          
+          .hamburger-button-${zIndex} {
+            position: absolute;
+            left: ${buttonLeft};
+            top: ${buttonTop};
+            transform: translate(-50%, -50%);
+            border-radius: 20px;
+            z-index: ${zIndex + 1};
+            background: ${buttonColor};
+            border: none;
+            cursor: pointer;
+            transition: all 0.3s ease;
+          }
+          
+          .hamburger-button-${zIndex}:hover {
+            transform: translate(-50%, -50%) scale(1.1);
+          }
+          
+          .hamburger-button-${zIndex}:focus {
+            outline: 2px solid ${textColor};
+            outline-offset: 2px;
+          }
+          
+          .menu-items-${zIndex} {
+            ${menuDirection === "horizontal" ? "display: flex; flex-wrap: wrap; gap: 1rem;" : ""}
+            ${menuAlignment === "center" ? "text-align: center;" : ""}
+            ${menuAlignment === "right" ? "text-align: right;" : ""}
+          }
+          
+          .menu-item-${zIndex} {
+            position: relative;
+            list-style: none;
+            padding: 0.5rem 0;
+            cursor: pointer;
+            transform: translateX(-200px);
+            opacity: 0;
+            transition: all 0.3s ease;
+            font-family: ${fontFamily};
+            font-weight: ${fontWeight};
+            color: ${textColor};
+            ${menuDirection === "horizontal" ? "display: inline-block; margin: 0 1rem;" : ""}
+          }
+          
+          .menu-item-${zIndex}.visible {
+            transform: translateX(0);
+            opacity: 1;
+          }
+          
+          .menu-item-${zIndex}::before {
+            content: "";
+            position: absolute;
+            left: -20%;
+            top: 50%;
+            transform: translate(-50%, -50%) translateX(-50%);
+            width: 25%;
+            height: 8px;
+            border-radius: 10px;
+            background: ${textColor};
+            opacity: 0;
+            transition: all 0.25s ease;
+            pointer-events: none;
+          }
+          
+          .menu-item-${zIndex}:hover::before {
+            opacity: 1;
+            transform: translate(-50%, -50%) translateX(0);
+          }
+          
+          .menu-item-${zIndex} span {
+            opacity: 0.7;
+            transition: opacity 0.25s ease;
+            display: flex;
+            align-items: center;
+            gap: 0.5rem;
+          }
+          
+          .menu-item-${zIndex}:hover span {
+            opacity: 1;
+          }
+          
+          .menu-item-${zIndex}:focus {
+            outline: 2px solid ${textColor};
+            outline-offset: 2px;
+            border-radius: 4px;
+          }
+          
+          /* Mobile responsiveness */
+          @media (max-width: 768px) {
+            .hamburger-button-${zIndex} {
+              left: 30px;
+              top: 30px;
+            }
+            
+            .hamburger-overlay-${zIndex} {
+              clip-path: circle(0px at 30px 30px);
+            }
+            
+            .hamburger-overlay-${zIndex}.open {
+              clip-path: circle(150% at 30px 30px);
+            }
+            
+            .menu-items-${zIndex} {
+              padding: 1rem;
+              max-height: 80vh;
+              overflow-y: auto;
+            }
+            
+            .menu-item-${zIndex} {
+              padding: 1rem 0;
+            }
+          }
+          
+          @media (max-width: 480px) {
+            .menu-items-${zIndex} {
+              ${menuDirection === "horizontal" ? "flex-direction: column; gap: 0;" : ""}
+            }
+            
+            .menu-item-${zIndex} {
+              ${menuDirection === "horizontal" ? "display: block; margin: 0;" : ""}
+            }
+          }
+        `}
+      </style>
+
+      {/* Navigation Overlay */}
+      <div
+        ref={navRef}
+        className={cn(`flex flex-col items-center justify-center h-full
+           hamburger-overlay-${zIndex}`, isOpen && "open")}
+        aria-hidden={!isOpen}
+      >
+        <ul
+          className={cn(
+            `mt-20 menu-items-${zIndex}`,
+            menuDirection === "horizontal" && "flex flex-wrap "
+          )}
+        >
+          {items.map((item, index) => (
+            <li
+              key={index}
+              className={cn(
+                `menu-item-${zIndex}`,
+                fontSizes[fontSize],
+                isOpen && "visible",
+                menuItemClassName
+              )}
+              style={{
+                transitionDelay: isOpen ? `${index * staggerDelay}s` : "0s",
+              }}
+              onClick={() => handleItemClick(item)}
+              onKeyDown={(e) => {
+                if (e.key === "Enter" || e.key === " ") {
+                  e.preventDefault();
+                  handleItemClick(item);
+                }
+              }}
+              tabIndex={isOpen ? 0 : -1}
+              role="button"
+              aria-label={`Navigate to ${item.label}`}
+            >
+              <span>
+                {item.icon && <span className="menu-icon">{item.icon}</span>}
+                {item.label}
+              </span>
+            </li>
+          ))}
+        </ul>
+      </div>
+
+      {/* Hamburger Button */}
+      <button
+        className={cn(
+          `hamburger-button-${zIndex}`,
+          buttonSizes[buttonSize],
+          buttonClassName
+        )}
+        onClick={toggleMenu}
+        aria-label={ariaLabel}
+        aria-expanded={isOpen}
+        aria-controls="navigation-menu"
+      >
+        {customButton || (
+          <div className="relative w-full h-full flex items-center justify-center">
+            <Menu
+              className={cn(
+                "absolute transition-all duration-300",
+                isOpen
+                  ? "opacity-0 rotate-45 scale-0"
+                  : "opacity-100 rotate-0 scale-100"
+              )}
+              size={buttonSize === "sm" ? 16 : buttonSize === "md" ? 20 : 24}
+              color={textColor}
+            />
+            <X
+              className={cn(
+                "absolute transition-all duration-300",
+                isOpen
+                  ? "opacity-100 rotate-0 scale-100"
+                  : "opacity-0 -rotate-45 scale-0"
+              )}
+              size={buttonSize === "sm" ? 16 : buttonSize === "md" ? 20 : 24}
+              color={textColor}
+            />
+          </div>
+        )}
+      </button>
+    </div>
+  );
+};
+
+export default HamburgerMenuOverlay;
+
+
+import React, { useState, useEffect, useRef } from "react";
+import { cn } from "../lib/utils";
+import { Input, InputProps  } from "./input";
+import { Label } from "./label";
+import { Eye, EyeOff, Check, X } from "lucide-react";
+
+export type StrengthLevel = "empty" | "weak" | "medium" | "strong" | "very-strong";
+
+export interface PasswordStrengthIndicatorProps {
+  /**
+   * The value of the password input
+   */
+  value: string;
+  
+  /**
+   * Class name for the container
+   */
+  className?: string;
+  
+  /**
+   * Label text for the password field
+   */
+  label?: string;
+  
+  /**
+   * Show strength score as text
+   */
+  showScore?: boolean;
+  
+  /**
+   * Show strength score as number
+   */
+  showScoreNumber?: boolean;
+  
+  /**
+   * Function called when password changes
+   */
+  onChange?: (value: string) => void;
+  
+  /**
+   * Function called when strength level changes
+   */
+  onStrengthChange?: (strength: StrengthLevel) => void;
+  
+  /**
+   * Placeholder text for input
+   */
+  placeholder?: string;
+  
+  /**
+   * Show toggle for password visibility
+   */
+  showVisibilityToggle?: boolean;
+  
+  /**
+   * Additional props for the input element
+   */
+  inputProps?: InputProps; // <--- Use the imported InputProps here
+}
+
+// Password strength calculation based on common rules
+const calculateStrength = (password: string): { score: number; level: StrengthLevel } => {
+  if (!password) return { score: 0, level: "empty" };
+  
+  let score = 0;
+  
+  // Length check
+  if (password.length > 5) score += 1;
+  if (password.length > 8) score += 1;
+  
+  // Character variety checks
+  if (/[A-Z]/.test(password)) score += 1;
+  if (/[a-z]/.test(password)) score += 1;
+  if (/[0-9]/.test(password)) score += 1;
+  if (/[^A-Za-z0-9]/.test(password)) score += 1;
+  
+  // Determine level based on score
+  let level: StrengthLevel = "empty";
+  if (score === 0) level = "empty";
+  else if (score <= 2) level = "weak";
+  else if (score <= 4) level = "medium";
+  else if (score <= 5) level = "strong";
+  else level = "very-strong";
+  
+  return { score, level };
+};
+
+// Colors for different strength levels
+const strengthColors = {
+  empty: "bg-gray-200",
+  weak: "bg-red-500",
+  medium: "bg-orange-500",
+  strong: "bg-green-500",
+  "very-strong": "bg-emerald-500",
+};
+
+// Text labels for different strength levels
+const strengthLabels = {
+  empty: "Empty",
+  weak: "Weak",
+  medium: "Medium",
+  strong: "Strong",
+  "very-strong": "Very Strong",
+};
+
+export function PasswordStrengthIndicator({
+  value,
+  className,
+  label = "Password",
+  showScore = true,
+  showScoreNumber = false,
+  onChange,
+  onStrengthChange,
+  placeholder = "Enter your password",
+  showVisibilityToggle = true,
+  inputProps,
+}: PasswordStrengthIndicatorProps) {
+  const [password, setPassword] = useState(value || "");
+  const [showPassword, setShowPassword] = useState(false);
+  const { score, level } = calculateStrength(password);
+  const inputRef = useRef<HTMLInputElement>(null);
+  
+  useEffect(() => {
+    if (onStrengthChange) {
+      onStrengthChange(level);
+    }
+  }, [level, onStrengthChange]);
+  
+  const handleChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const newValue = e.target.value;
+    setPassword(newValue);
+    if (onChange) onChange(newValue);
+  };
+  
+  const toggleVisibility = () => {
+    setShowPassword(!showPassword);
+    // Focus back on input after toggling visibility
+    setTimeout(() => {
+      if (inputRef.current) inputRef.current.focus();
+    }, 0);
+  };
+  
+  return (
+    <div className={cn("space-y-2", className)}>
+      {label && (
+        <div className="flex justify-between items-center">
+          <Label htmlFor="password">{label}</Label>
+          {showScoreNumber && (
+            <span className="text-xs text-muted-foreground">
+              {Math.floor((score / 6) * 10)}/10
+            </span>
+          )}
+        </div>
+      )}
+      
+      <div className="relative">
+        <Input
+          ref={inputRef}
+          id="password"
+          type={showPassword ? "text" : "password"}
+          value={password}
+          onChange={handleChange}
+          placeholder={placeholder}
+          className="pr-10"
+          {...inputProps}
+        />
+        
+        {showVisibilityToggle && (
+          <button
+            type="button"
+            onClick={toggleVisibility}
+            className="absolute right-2 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground transition-colors"
+            aria-label={showPassword ? "Hide password" : "Show password"}
+          >
+            {showPassword ? (
+              <EyeOff className="h-5 w-5" />
+            ) : (
+              <Eye className="h-5 w-5" />
+            )}
+          </button>
+        )}
+        
+        {password && (
+          <div className="absolute right-10 top-1/2 -translate-y-1/2">
+            <div className={cn(
+              "w-6 h-6 rounded-full flex items-center justify-center",
+              level === "weak" ? "bg-red-500" : level === "medium" ? "bg-orange-500" : "bg-green-500"
+            )}>
+              {level === "weak" ? (
+                <X className="h-4 w-4 text-white" />
+              ) : (
+                <Check className="h-4 w-4 text-white" />
+              )}
+            </div>
+          </div>
+        )}
+      </div>
+      
+      {/* Password strength bar */}
+      <div className="h-1.5 w-full bg-gray-100 rounded-full overflow-hidden flex gap-0.5">
+        {Array.from({ length: 4 }).map((_, i) => (
+          <div
+            key={i}
+            className={cn(
+              "h-full flex-1 rounded-full transition-all duration-300",
+              i < Math.min(Math.ceil(score / 1.5), 4) ? strengthColors[level] : "bg-gray-200"
+            )}
+          />
+        ))}
+      </div>
+      
+      {/* Strength label */}
+      {showScore && level !== "empty" && (
+        <p className={cn(
+          "text-xs transition-colors",
+          level === "weak" ? "text-red-500" :
+          level === "medium" ? "text-orange-500" :
+          level === "strong" ? "text-green-500" :
+          "text-emerald-500"
+        )}>
+          {strengthLabels[level]}
+        </p>
+      )}
+    </div>
+  );
+}
+
+
+import React, { useRef, useEffect, useState } from "react";
+import { motion, useScroll, Variants } from "framer-motion";
+
+// Define the props for the ScrollList component
+interface ScrollListProps<T> {
+  data: T[]; // The array of data items to display
+  renderItem: (item: T, index: number) => React.ReactNode; // Function to render each item's content
+  itemHeight?: number; // Optional: Fixed height for each item in pixels. Defaults to 155px.
+}
+
+const ScrollList = <T,>({
+  data,
+  renderItem,
+  itemHeight = 155, // Default item height
+}: ScrollListProps<T>) => {
+  // useRef to get a reference to the scrollable div element
+  const listRef = useRef<HTMLDivElement>(null);
+  // useState to keep track of the index of the currently focused item
+  const [focusedIndex, setFocusedIndex] = useState<number>(0);
+
+  // useScroll hook from Framer Motion to track scroll progress (can be used for additional animations)
+  const { scrollYProgress } = useScroll({ container: listRef });
+
+  useEffect(() => {
+    const updateFocusedItem = () => {
+      if (!listRef.current) return;
+
+      const container = listRef.current;
+      // Get all direct children (the motion.div items)
+      const children = Array.from(container.children) as HTMLDivElement[];
+      const scrollTop = container.scrollTop; // Current vertical scroll position
+      const containerCenter = container.clientHeight / 2; // Vertical center of the container
+
+      let closestItemIndex = 0;
+      let minDistanceToCenter = Infinity; // Initialize with a very large number
+
+      // Iterate over each child item to find the one closest to the center
+      children.forEach((child, index) => {
+        const itemTop = child.offsetTop; // Top position of the item relative to its parent
+        const actualItemHeight = child.offsetHeight; // Actual rendered height of the item
+        const itemCenter = itemTop + actualItemHeight / 2; // Vertical center of the item
+
+        // Calculate the distance from the item's center to the container's center, adjusted for scroll
+        const distanceToCenter = Math.abs(
+          itemCenter - scrollTop - containerCenter
+        );
+
+        // If this item is closer to the center than the previous closest
+        if (distanceToCenter < minDistanceToCenter) {
+          minDistanceToCenter = distanceToCenter;
+          closestItemIndex = index;
+        }
+      });
+
+      // Update the focused index state
+      setFocusedIndex(closestItemIndex);
+    };
+
+    // Call immediately on mount to set initial focused item
+    updateFocusedItem();
+
+    // Add scroll event listener to update focused item on scroll
+    const listElement = listRef.current;
+    if (listElement) {
+      listElement.addEventListener("scroll", updateFocusedItem);
+    }
+
+    // Cleanup function: remove the event listener when the component unmounts
+    return () => {
+      if (listElement) {
+        listElement.removeEventListener("scroll", updateFocusedItem);
+      }
+    };
+  }, [data, itemHeight]); // Dependencies: Re-run effect if data or itemHeight changes
+
+  // Framer Motion Variants for defining animation states for each item
+  const itemVariants: Variants = {
+    hidden: {
+      opacity: 0,
+      scale: 0.7,
+      transition: { duration: 0.35, ease: "easeOut" },
+    },
+    focused: {
+      opacity: 1,
+      scale: 1,
+      zIndex: 10,
+      transition: { duration: 0.35, ease: "easeOut" },
+    },
+    next: {
+      opacity: 1,
+      scale: 0.95,
+      zIndex: 5,
+      transition: { duration: 0.35, ease: "easeOut" },
+    },
+    visible: {
+      opacity: 1,
+      scale: 1,
+      transition: { duration: 0.35, ease: "easeOut" },
+    },
+  };
+
+  return (
+    <div
+      ref={listRef}
+      // Tailwind CSS classes for styling: hidden scrollbar, centered horizontally, full width
+      className="scroll-list__wrp scrollbar-hidden mx-auto w-full"
+      // Inline style for fixed height and scrollability of the main container
+      style={{ height: "600px", overflowY: "auto" }}
+    >
+      {data.map((item, index) => {
+        let variant = "hidden"; // Default variant
+
+        // Determine the animation variant based on the item's position relative to the focused item
+        if (index === focusedIndex) {
+          variant = "focused"; // The currently focused item
+        } else if (index === focusedIndex + 1) {
+          variant = "next"; // The item immediately following the focused one
+        } else {
+          // Items within a certain range (2 items above/below) of the focused item are visible
+          const isWithinVisibleRange = Math.abs(index - focusedIndex) <= 2;
+          if (isWithinVisibleRange) {
+            variant = "visible";
+          }
+        }
+
+        return (
+          <motion.div
+            key={index} // Unique key for React list rendering
+            // !!! IMPORTANT CHANGE HERE !!!
+            // Use a fixed width Tailwind class, e.g., 'w-96' (384px) or 'w-[350px]' for a custom pixel value.
+            // Using 'w-full' will make them take the full width of the parent, which is 'w-full' from scroll-list__wrp.
+            className="scroll-list__item mx-auto max-w-3xl" // Example: fixed width of 384px. Adjust as needed.
+            variants={itemVariants} // Apply defined animation variants
+            initial="hidden" // Initial animation state
+            animate={variant} // Animate to this variant based on scroll position
+            // Set the height of each individual item.
+            style={{
+              height: itemHeight ? `${itemHeight}px` : "auto",
+            }}
+          >
+            {renderItem(item, index)}
+          </motion.div>
+        );
+      })}
+    </div>
+  );
+};
+
+export default ScrollList;
+
+
+import React from "react";
+import { Star } from "lucide-react";
+import { cn } from "../lib/utils"; // Adjust path if needed
+import { CountUp } from "./count-up";
+
+interface TrustedUsersProps {
+  avatars: string[];
+  rating?: number;
+  totalUsersText?: number;
+  caption?: string;
+  className?: string;
+  starColorClass?: string;
+  ringColors?: string[];
+}
+
+export const TrustedUsers: React.FC<TrustedUsersProps> = ({
+  avatars,
+  rating = 5,
+  totalUsersText = 1000, // ✅ default as number
+  caption = "Trusted by",
+  className = "",
+  starColorClass = "text-yellow-400",
+  ringColors = [],
+}) => {
+  return (
+    <div
+      className={cn(
+        `flex items-center justify-center gap-6 bg-transparent
+          text-foreground py-4 px-4`,
+        className
+      )}
+    >
+      <div className="flex -space-x-4">
+        {avatars.map((src, i) => (
+          <div
+            key={i}
+            className={`w-10 h-10 rounded-full overflow-hidden ring-1 ring-offset-2 ring-offset-black ${
+              ringColors[i] || "ring-blue-900"
+            }`}
+          >
+            <img
+              src={src}
+              alt={`Avatar ${i + 1}`}
+              className="w-full h-full object-cover"
+              loading="lazy" // Add lazy loading
+              decoding="async" // Suggest asynchronous decoding
+            />
+          </div>
+        ))}
+      </div>
+
+      <div className="flex flex-col items-start gap-1">
+        <div className={`flex gap-1 ${starColorClass}`}>
+          {Array.from({ length: rating }).map((_, i) => (
+            <Star key={i} fill="currentColor" className="w-4 h-4" />
+          ))}
+        </div>
+        <span className="text-foreground text-xs md:text-md font-medium">
+          {caption}
+          <CountUp
+            value={totalUsersText}
+            duration={2}
+            separator=","
+            className="ml-1 text-lg"
+            suffix="+"
+            colorScheme="gradient"
+          />
+          users
+        </span>
+      </div>
+    </div>
+  );
+};
+
+
+"use client";
+import React from "react";
+import { motion } from "framer-motion";
+
+type RippleLoaderProps = {
+  icon?: React.ReactNode;
+  size?: number;
+  duration?: number; // in seconds
+  logoColor?: string;
+};
+
+const RippleLoader: React.FC<RippleLoaderProps> = ({
+  icon,
+  size = 250,
+  duration = 2, // use number for easier calculations
+  logoColor = "grey",
+}) => {
+  const baseInset = 40;
+  const rippleBoxes = Array.from({ length: 5 }, (_, i) => ({
+    inset: `${baseInset - i * 10}%`,
+    zIndex: 99 - i,
+    delay: i * 0.2,
+    opacity: 1 - i * 0.2,
+  }));
+
+  return (
+    <div
+      className="relative"
+      style={{ width: size, height: size }}
+    >
+      {rippleBoxes.map((box, i) => (
+        <motion.div
+          key={i}
+          className="absolute rounded-full border-t backdrop-blur-[5px]"
+          style={{
+            inset: box.inset,
+            zIndex: box.zIndex,
+            borderColor: `rgba(100,100,100,${box.opacity})`,
+            background:
+              "linear-gradient(0deg, rgba(50, 50, 50, 0.2), rgba(100, 100, 100, 0.2))",
+          }}
+          animate={{
+            scale: [1, 1.3, 1],
+            boxShadow: [
+              "rgba(0, 0, 0, 0.3) 0px 10px 10px 0px",
+              "rgba(0, 0, 0, 0.3) 0px 30px 20px 0px",
+              "rgba(0, 0, 0, 0.3) 0px 10px 10px 0px",
+            ],
+          }}
+          transition={{
+            repeat: Infinity,
+            duration,
+            delay: box.delay,
+            ease: "easeInOut",
+          }}
+        />
+      ))}
+
+      <div className="absolute inset-0 grid place-content-center p-[30%]">
+        <motion.span
+          className="w-full h-full"
+          animate={{ color: [logoColor, "#ffffff", logoColor] }}
+          transition={{
+            repeat: Infinity,
+            duration,
+            ease: "easeInOut",
+          }}
+        >
+          <span
+            className="w-full h-full"
+            style={{ display: "inline-block", width: "100%", height: "100%" }}
+          >
+            {icon &&
+              React.cloneElement(icon as React.ReactElement, {
+                style: {
+                  width: "100%",
+                  height: "100%",
+                  fill: "currentColor",
+                },
+              })}
+          </span>
+        </motion.span>
+      </div>
+    </div>
+  );
+};
+
+export default RippleLoader;
+
+
+
+import React from "react";
+import { cn } from "../lib/utils"; // Assuming 'cn' is a utility for merging class names
+
+export interface AuroraTextEffectProps {
+  text: string;
+  className?: string;
+  textClassName?: string;
+  fontSize?: string;
+  colors?: {
+    first?: string;
+    second?: string;
+    third?: string;
+    fourth?: string;
+  };
+  blurAmount?:
+    | "blur-none"
+    | "blur-sm"
+    | "blur-md"
+    | "blur-lg"
+    | "blur-xl"
+    | "blur-2xl"
+    | "blur-3xl"
+    | string;
+  animationSpeed?: {
+    border?: number;
+    first?: number;
+    second?: number;
+    third?: number;
+    fourth?: number;
+  };
+}
+
+export function AuroraTextEffect({
+  text,
+  className,
+  textClassName,
+  fontSize = "clamp(3rem, 8vw, 7rem)",
+  colors = {
+    first: "bg-cyan-400",
+    second: "bg-yellow-400",
+    third: "bg-green-400",
+    fourth: "bg-purple-500",
+  },
+  blurAmount = "blur-lg",
+  animationSpeed = {
+    border: 6,
+    first: 5,
+    second: 5,
+    third: 3,
+    fourth: 13,
+  },
+}: AuroraTextEffectProps) {
+  // Define keyframes as a style object
+  const keyframes = `
+    @keyframes aurora-1 {
+      0% { top: 0; right: 0; }
+      50% { top: 100%; right: 75%; }
+      75% { top: 100%; right: 25%; }
+      100% { top: 0; right: 0; }
+    }
+    @keyframes aurora-2 {
+      0% { top: -50%; left: 0%; }
+      60% { top: 100%; left: 75%; }
+      85% { top: 100%; left: 25%; }
+      100% { top: -50%; left: 0%; }
+    }
+    @keyframes aurora-3 {
+      0% { bottom: 0; left: 0; }
+      40% { bottom: 100%; left: 75%; }
+      65% { bottom: 40%; left: 50%; }
+      100% { bottom: 0; left: 0; }
+    }
+    @keyframes aurora-4 {
+      0% { bottom: -50%; right: 0; }
+      50% { bottom: 0%; right: 40%; }
+      90% { bottom: 50%; right: 25%; }
+      100% { bottom: -50%; right: 0; }
+    }
+    @keyframes aurora-border {
+      0% { border-radius: 37% 29% 27% 27% / 28% 25% 41% 37%; }
+      25% { border-radius: 47% 29% 39% 49% / 61% 19% 66% 26%; }
+      50% { border-radius: 57% 23% 47% 72% / 63% 17% 66% 33%; }
+      75% { border-radius: 28% 49% 29% 100% / 93% 20% 64% 25%; }
+      100% { border-radius: 37% 29% 27% 27% / 28% 25% 41% 37%; }
+    }
+  `;
+
+  return (
+    <div
+      className={cn(
+        // Updated to support light and dark modes
+        "bg-white dark:bg-black flex items-center justify-center overflow-hidden",
+        className
+      )}
+    >
+      <style>{keyframes /* This injects the keyframes into the DOM */}</style>
+      <div className="text-center">
+        <h1
+          className={cn(
+            // Added theme-aware text color for visibility
+            "font-extrabold tracking-tight relative overflow-hidden text-black dark:text-white",
+            textClassName
+          )}
+          style={{ fontSize }}
+        >
+          {text}
+          <div
+            // Switched blend mode based on theme to preserve the effect
+            className="absolute inset-0 z-10 mix-blend-lighten dark:mix-blend-darken pointer-events-none"
+          >
+            {/* First Aurora Layer */}
+            <div
+              className={cn(
+                "absolute w-[60vw] h-[60vw] rounded-[37%_29%_27%_27%/28%_25%_41%_37%] filter mix-blend-overlay",
+                colors.first || "bg-cyan-400",
+                blurAmount
+              )}
+              style={{
+                animationName: "aurora-border, aurora-1",
+                animationDuration: `${animationSpeed.border}s, ${animationSpeed.first}s`,
+                animationTimingFunction: "ease-in-out, ease-in-out",
+                animationIterationCount: "infinite, infinite",
+                animationDirection: "normal, alternate",
+              }}
+            />
+
+            {/* Second Aurora Layer */}
+            <div
+              className={cn(
+                "absolute w-[60vw] h-[60vw] rounded-[37%_29%_27%_27%/28%_25%_41%_37%] filter mix-blend-overlay",
+                colors.second,
+                blurAmount
+              )}
+              style={{
+                animationName: "aurora-border, aurora-2",
+                animationDuration: `${animationSpeed.border}s, ${animationSpeed.second}s`,
+                animationTimingFunction: "ease-in-out, ease-in-out",
+                animationIterationCount: "infinite, infinite",
+                animationDirection: "normal, alternate",
+              }}
+            />
+
+            {/* Third Aurora Layer */}
+            <div
+              className={cn(
+                "absolute w-[60vw] h-[60vw] rounded-[37%_29%_27%_27%/28%_25%_41%_37%] filter mix-blend-overlay",
+                colors.third,
+                blurAmount
+              )}
+              style={{
+                animationName: "aurora-border, aurora-3",
+                animationDuration: `${animationSpeed.border}s, ${animationSpeed.third}s`,
+                animationTimingFunction: "ease-in-out, ease-in-out",
+                animationIterationCount: "infinite, infinite",
+                animationDirection: "normal, alternate",
+              }}
+            />
+
+            {/* Fourth Aurora Layer */}
+            <div
+              className={cn(
+                "absolute w-[60vw] h-[60vw] rounded-[37%_29%_27%_27%/28%_25%_41%_37%] filter mix-blend-overlay",
+                colors.fourth,
+                blurAmount
+              )}
+              style={{
+                animationName: "aurora-border, aurora-4",
+                animationDuration: `${animationSpeed.border}s, ${animationSpeed.fourth}s`,
+                animationTimingFunction: "ease-in-out, ease-in-out",
+                animationIterationCount: "infinite, infinite",
+                animationDirection: "normal, alternate",
+              }}
+            />
+          </div>
+        </h1>
+      </div>
+    </div>
+  );
+}
+
+
+// "use client"; directive is correctly placed at the top
+
+import React, { useRef, useMemo } from "react"; // Added useMemo
+import { motion, useInView, useScroll, useTransform } from "framer-motion";
+import { cn } from "../lib/utils"; // Assuming cn utility is available
+
+export interface ScrollRevealProps {
+  children: React.ReactNode;
+  /** Custom container className */
+  containerClassName?: string;
+  /** Custom text className */
+  textClassName?: string;
+  /** Enable blur animation effect */
+  enableBlur?: boolean;
+  /** Base opacity when text is out of view */
+  baseOpacity?: number;
+  /** Base rotation angle in degrees */
+  baseRotation?: number;
+  /** Blur strength in pixels */
+  blurStrength?: number;
+  /** Animation delay between words in seconds */
+  staggerDelay?: number;
+  /** Viewport threshold for triggering animation */
+  threshold?: number;
+  /** Animation duration in seconds */
+  duration?: number;
+  /** Spring animation configuration */
+  springConfig?: {
+    damping?: number;
+    stiffness?: number;
+    mass?: number;
+  };
+  /** Text size variant */
+  size?: "sm" | "md" | "lg" | "xl" | "2xl";
+  /** Text alignment */
+  align?: "left" | "center" | "right";
+  /** Color variant */
+  variant?: "default" | "muted" | "accent" | "primary";
+}
+
+const sizeClasses = {
+  sm: "text-lg md:text-xl",
+  md: "text-xl md:text-2xl lg:text-3xl",
+  lg: "text-2xl md:text-3xl lg:text-4xl xl:text-5xl",
+  xl: "text-3xl md:text-4xl lg:text-5xl xl:text-6xl",
+  "2xl": "text-4xl md:text-5xl lg:text-6xl xl:text-7xl",
+};
+
+const alignClasses = {
+  left: "text-left",
+  center: "text-center",
+  right: "text-right",
+};
+
+const variantClasses = {
+  default: "text-foreground",
+  muted: "text-muted-foreground",
+  accent: "text-accent-foreground",
+  primary: "text-primary",
+};
+
+export function ScrollReveal({
+  children,
+  containerClassName,
+  textClassName,
+  enableBlur = true,
+  baseOpacity = 0.1,
+  baseRotation = 3,
+  blurStrength = 4,
+  staggerDelay = 0.05,
+  threshold = 0.5,
+  duration = 0.8,
+  springConfig = { // Default spring config is always good to have
+    damping: 25,
+    stiffness: 100,
+    mass: 1,
+  },
+  size = "lg",
+  align = "left",
+  variant = "default",
+}: ScrollRevealProps) {
+  const containerRef = useRef<HTMLDivElement>(null);
+  const isInView = useInView(containerRef, {
+    amount: threshold,
+    once: false
+  });
+
+  const { scrollYProgress } = useScroll({
+    target: containerRef,
+    offset: ["start end", "end start"]
+  });
+
+  // Transform rotation based on scroll
+  const rotation = useTransform(
+    scrollYProgress,
+    [0, 0.5, 1],
+    [baseRotation, 0, 0]
+  );
+
+  // Split text into words and spaces, ensuring each part is an object
+  const splitText = useMemo(() => { // Using useMemo is good here
+    const text = typeof children === "string" ? children : "";
+    // Split by spaces, keeping the spaces as separate elements in the array.
+    // Each 'part' will either be a word or a sequence of spaces.
+    return text.split(/(\s+)/).map((part, index) => {
+      // Return an object for both words and spaces, with a 'type' property
+      // to differentiate them in the rendering loop.
+      return {
+        value: part,
+        isSpace: part.match(/^\s+$/) && part.length > 0, // Check if it's a non-empty string of only whitespace
+        originalIndex: index, // Keep original index for stable keys
+      };
+    }).filter(item => item.value.length > 0); // Filter out any empty strings that might result from split
+  }, [children]);
+
+  const containerVariants = {
+    hidden: { opacity: 0 },
+    visible: {
+      opacity: 1,
+      transition: {
+        staggerChildren: staggerDelay,
+        delayChildren: 0.1,
+      },
+    },
+  };
+
+  const wordVariants = {
+    hidden: {
+      opacity: baseOpacity,
+      filter: enableBlur ? `blur(${blurStrength}px)` : "blur(0px)",
+      y: 20,
+    },
+    visible: {
+      opacity: 1,
+      filter: "blur(0px)",
+      y: 0,
+      transition: {
+        // Removed `type: "spring"` here. Framer Motion infers "spring"
+        // when damping, stiffness, or mass are present.
+        ...springConfig,
+        duration, // This is a common property for all transition types
+      },
+    },
+  };
+
+  return (
+    <motion.div
+      ref={containerRef}
+      style={{ rotate: rotation }}
+      className={cn(
+        "my-5 transform-gpu",
+        containerClassName
+      )}
+    >
+      <motion.p
+        className={cn(
+          "leading-relaxed font-semibold",
+          sizeClasses[size],
+          alignClasses[align],
+          variantClasses[variant],
+          textClassName
+        )}
+        variants={containerVariants}
+        initial="hidden"
+        // Changed to `isInView` to match the behavior of triggering on view
+        animate={isInView ? "visible" : "hidden"}
+      >
+        {splitText.map((item) => ( // Map over 'item' directly as it's always an object
+          item.isSpace ? (
+            // Render spaces as a regular span
+            <span key={`space-${item.originalIndex}`}>{item.value}</span>
+          ) : (
+            // Render words as motion.span for animation
+            <motion.span
+              key={`word-${item.originalIndex}`} // Use originalIndex for stable keys
+              className="inline-block"
+              variants={wordVariants}
+            >
+              {item.value}
+            </motion.span>
+          )
+        ))}
+      </motion.p>
+    </motion.div>
+  );
+}
+
+export default ScrollReveal;
+
+
+"use client";
+
+import React from "react";
+import { motion, type Variants } from "framer-motion"; // Import Variants type
+import { cn } from "../lib/utils";
+
+export interface ShinyTextProps {
+  /** Text content to display */
+  children: React.ReactNode;
+  /** Disable the shiny animation */
+  disabled?: boolean;
+  /** Animation speed in seconds */
+  speed?: number;
+  /** Custom className */
+  className?: string;
+  /** Text size variant */
+  size?: "xs" | "sm" | "base" | "lg" | "xl" | "2xl" | "3xl" | "4xl";
+  /** Font weight */
+  weight?: "normal" | "medium" | "semibold" | "bold" | "extrabold";
+  /** Base text color */
+  baseColor?: string;
+  /** Shine effect color */
+  shineColor?: string;
+  /** Shine effect intensity (0-1) */
+  intensity?: number;
+  /** Animation direction */
+  direction?: "left-to-right" | "right-to-left" | "top-to-bottom" | "bottom-to-top";
+  /** Shine effect width percentage */
+  shineWidth?: number;
+  /** Delay before animation starts in seconds */
+  delay?: number;
+  /** Animation repeat behavior */
+  repeat?: number | "infinite";
+  /** Pause animation on hover */
+  pauseOnHover?: boolean;
+  /** Gradient type */
+  gradientType?: "linear" | "radial";
+}
+
+const sizeClasses = {
+  xs: "text-xs",
+  sm: "text-sm",
+  base: "text-base",
+  lg: "text-lg",
+  xl: "text-xl",
+  "2xl": "text-2xl",
+  "3xl": "text-3xl",
+  "4xl": "text-4xl",
+};
+
+const weightClasses = {
+  normal: "font-normal",
+  medium: "font-medium",
+  semibold: "font-semibold",
+  bold: "font-bold",
+  extrabold: "font-extrabold",
+};
+
+const directionConfig = {
+  "left-to-right": {
+    backgroundPosition: ["100% 0%", "-100% 0%"],
+    backgroundSize: "200% 100%",
+  },
+  "right-to-left": {
+    backgroundPosition: ["-100% 0%", "100% 0%"],
+    backgroundSize: "200% 100%",
+  },
+  "top-to-bottom": {
+    backgroundPosition: ["0% 100%", "0% -100%"],
+    backgroundSize: "100% 200%",
+  },
+  "bottom-to-top": {
+    backgroundPosition: ["0% -100%", "0% 100%"],
+    backgroundSize: "100% 200%",
+  },
+};
+
+export function ShinyText({
+  children,
+  disabled = false,
+  speed = 3,
+  className,
+  size = "base",
+  weight = "medium",
+  baseColor,
+  shineColor,
+  intensity = 1,
+  direction = "left-to-right",
+  shineWidth = 0,
+  delay = 0,
+  repeat = "infinite",
+  pauseOnHover = false,
+  gradientType = "linear",
+}: ShinyTextProps) {
+  const config = directionConfig[direction];
+
+  const gradientDirection = direction === "left-to-right" || direction === "right-to-left"
+    ? "90deg"
+    : direction === "top-to-bottom"
+    ? "180deg"
+    : "0deg";
+
+  // Default colors based on theme
+  const defaultBaseColor = "hsl(var(--foreground)/20)";
+  const defaultShineColor = "hsl(var(--primary)/20)";
+
+  const finalBaseColor = baseColor || defaultBaseColor;
+  const finalShineColor = shineColor || defaultShineColor;
+
+  const createGradient = () => {
+    const transparentStartPos = Math.max(0, (50 - shineWidth / 2));
+    const transparentEndPos = Math.min(100, (50 + shineWidth / 2));
+
+    const shineStart = `${finalShineColor} ${transparentStartPos}%`;
+    const shineEnd = `${finalShineColor} ${transparentEndPos}%`;
+
+    return gradientType === "linear"
+      ? `linear-gradient(${gradientDirection}, ${finalBaseColor}, transparent ${transparentStartPos - 5}%, ${shineStart}, ${shineEnd}, transparent ${transparentEndPos + 5}%, ${finalBaseColor})`
+      : `radial-gradient(ellipse at center, ${finalShineColor} ${intensity * 100}%, transparent)`;
+  };
+
+  // Define the animate state structure consistently
+  const animationVariants: Variants = { // Explicitly type as Variants
+    initial: {
+      backgroundPosition: config.backgroundPosition[0],
+    },
+    animate: disabled
+      ? {
+          // When disabled, snap to initial position with no animation
+          backgroundPosition: config.backgroundPosition[0],
+          transition: {
+            duration: 0,
+            delay: 0,
+            repeat: 0, // Explicitly define repeat and ease for consistent type
+            ease: "linear", // Even if not used, keeps type consistent
+          },
+        }
+      : {
+          backgroundPosition: config.backgroundPosition[1],
+          transition: {
+            duration: speed,
+            delay,
+            repeat: typeof repeat === "number" ? repeat : Infinity,
+            ease: "linear",
+          },
+        },
+    hover: pauseOnHover ? {
+      // Note: `animationPlayState` is a CSS property, Framer Motion variants
+      // primarily animate numerical/string values. To truly pause a Framer Motion
+      // animation, you'd typically use `useAnimationControls` and call `stop()`.
+      // However, if this is a background CSS animation being controlled by Framer Motion's
+      // `animate` prop, this might have an indirect effect or be ignored.
+      // For a robust pause, consider a `useAnimationControls` hook.
+      // Keeping it as is to preserve original logic for now, but be aware.
+    } : {},
+  };
+
+
+  if (disabled) {
+    return (
+      <span
+        className={cn(
+          "inline-block",
+          sizeClasses[size],
+          weightClasses[weight],
+          "text-foreground",
+          className
+        )}
+      >
+        {children}
+      </span>
+    );
+  }
+
+  return (
+    <motion.span
+      className={cn(
+        "bg-clip-text text-transparent inline-block",
+        sizeClasses[size],
+        weightClasses[weight],
+        className
+      )}
+      style={{
+        backgroundImage: createGradient(),
+        backgroundSize: config.backgroundSize,
+        WebkitBackgroundClip: "text",
+        backgroundClip: "text",
+        opacity: intensity,
+      }}
+      variants={animationVariants}
+      initial="initial"
+      animate="animate"
+      whileHover="hover"
+    >
+      {children}
+    </motion.span>
+  );
+}
+
+export default ShinyText;
+
+
+
+"use client";
+
+import React from "react";
+import { cn } from "../lib/utils";
+import { motion } from "framer-motion";
+
+interface BorderBeamProps {
+  /**
+   * The size of the border beam.
+   */
+  size?: number;
+  /**
+   * The duration of the border beam.
+   */
+  duration?: number;
+  /**
+   * The delay of the border beam.
+   */
+  delay?: number;
+  /**
+   * The color of the border beam from.
+   */
+  colorFrom?: string;
+  /**
+   * The color of the border beam to.
+   */
+  colorTo?: string;
+  /**
+   * The motion transition of the border beam.
+   */
+  transition?: any;
+  /**
+   * The class name of the border beam.
+   */
+  className?: string;
+  /**
+   * The style of the border beam.
+   */
+  style?: React.CSSProperties;
+  /**
+   * Whether to reverse the animation direction.
+   */
+  reverse?: boolean;
+  /**
+   * The initial offset position (0-100).
+   */
+  initialOffset?: number;
+  /**
+   * The thickness of the border.
+   */
+  borderThickness?: number;
+  /**
+   * The opacity of the beam.
+   */
+  opacity?: number;
+  /**
+   * The intensity of the glow effect.
+   */
+  glowIntensity?: number;
+  /**
+   * Border radius of the beam in pixels.
+   */
+  beamBorderRadius?: number;
+  /**
+   * Whether to pause animation on hover.
+   */
+  pauseOnHover?: boolean;
+  /**
+   * Animation speed multiplier (higher is faster).
+   */
+  speedMultiplier?: number;
+}
+
+export const BorderBeam = ({
+  className,
+  size = 50,
+  delay = 0,
+  duration = 6,
+  colorFrom = "#7400ff",
+  colorTo = "#9b41ff",
+  transition,
+  style,
+  reverse = false,
+  initialOffset = 0,
+  borderThickness = 1,
+  opacity = 1,
+  glowIntensity = 0,
+  beamBorderRadius,
+  pauseOnHover = false,
+  speedMultiplier = 1,
+}: BorderBeamProps) => {
+  // Calculate actual duration based on speed multiplier
+  const actualDuration = speedMultiplier ? duration / speedMultiplier : duration;
+  
+  // Generate box shadow for glow effect
+  const glowEffect = glowIntensity > 0 
+    ? `0 0 ${glowIntensity * 5}px ${glowIntensity * 2}px var(--color-from)` 
+    : undefined;
+
+  return (
+ <div className="pointer-events-none absolute inset-0 rounded-[inherit] 
+    border border-transparent [mask-clip:padding-box,border-box] 
+    [mask-composite:intersect] [mask-image:linear-gradient(transparent,transparent),linear-gradient(#000,#000)]"
+ 
+      // style={{ 
+      //   borderWidth: `${borderThickness}px`,
+      // }}
+    >
+      <motion.div
+        className={cn(
+          "absolute aspect-square",
+          "bg-gradient-to-l from-[var(--color-from)] via-[var(--color-to)] to-transparent",
+          pauseOnHover && "group-hover:animation-play-state-paused",
+          className,
+        )}
+        style={{
+          width: size,
+          offsetPath: `rect(0 auto auto 0 round ${beamBorderRadius ?? size}px)`,
+          "--color-from": colorFrom,
+          "--color-to": colorTo,
+          opacity: opacity,
+          boxShadow: glowEffect,
+          borderRadius: beamBorderRadius ? `${beamBorderRadius}px` : undefined,
+          ...style,
+        } as any}
+        initial={{ offsetDistance: `${initialOffset}%` }}
+        animate={{
+          offsetDistance: reverse
+            ? [`${100 - initialOffset}%`, `${-initialOffset}%`]
+            : [`${initialOffset}%`, `${100 + initialOffset}%`],
+        }}
+        transition={{
+          repeat: Infinity,
+          ease: "linear",
+          duration: actualDuration,
+          delay: -delay,
+          ...transition,
+        }}
+      />
+    </div>
+  );
+};
+
+
+import React, { useEffect, useState, useRef } from "react";
+import { cn } from "../lib/utils";
+import { Loader2 } from "lucide-react";
+import { cva, type VariantProps } from "class-variance-authority";
+
+// Confetti type
+type ConfettiOptions = {
+  particleCount?: number;
+  spread?: number;
+  startVelocity?: number;
+  decay?: number;
+  gravity?: number;
+  drift?: number;
+  ticks?: number;
+  origin?: {
+    x?: number;
+    y?: number;
+  };
+  colors?: string[];
+  shapes?: string[];
+  scalar?: number;
+  zIndex?: number;
+  disableForReducedMotion?: boolean;
+};
+
+// Global declaration
+declare global {
+  interface Window {
+    confetti?: (options?: ConfettiOptions) => void;
+  }
+}
+
+// Variants for button styling
+const confettiButtonVariants = cva(
+  "inline-flex items-center justify-center gap-2 font-medium transition-all duration-200 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 disabled:opacity-50 disabled:pointer-events-none",
+  {
+    variants: {
+      variant: {
+        default: "bg-primary text-primary-foreground hover:bg-primary/90",
+        secondary: "bg-secondary text-secondary-foreground hover:bg-secondary/90",
+        outline: "border bg-background hover:bg-accent hover:text-accent-foreground",
+        ghost: "hover:bg-accent hover:text-accent-foreground",
+        link: "text-primary underline-offset-4 hover:underline",
+        gradient: "bg-gradient-to-r from-blue-500 to-purple-600 text-white hover:from-blue-600 hover:to-purple-700",
+      },
+      size: {
+        default: "h-10 px-4 py-2 rounded-md",
+        sm: "h-8 px-3 py-1 rounded-md text-sm",
+        lg: "h-12 px-6 py-3 rounded-md text-lg",
+        xl: "h-14 px-8 py-4 rounded-md text-xl",
+        icon: "h-10 w-10 rounded-full",
+        pill: "h-10 px-6 py-2 rounded-full",
+      },
+      animation: {
+        none: "",
+        pulse: "animate-pulse",
+        bounce: "hover:animate-bounce",
+        scale: "active:scale-95",
+        shake: "hover:animate-[wiggle_0.3s_ease-in-out]",
+        glow: "hover:shadow-[0_0_15px_rgba(255,255,255,0.5)]",
+        expand: "active:scale-110 transition-transform",
+      },
+    },
+    defaultVariants: {
+      variant: "default",
+      size: "default",
+      animation: "scale",
+    },
+  }
+);
+
+export interface ConfettiButtonProps
+  extends React.ButtonHTMLAttributes<HTMLButtonElement>,
+    VariantProps<typeof confettiButtonVariants> {
+  asChild?: boolean;
+  icon?: React.ReactNode;
+  iconPosition?: "left" | "right";
+  loading?: boolean;
+  confettiOptions?: ConfettiOptions;
+  autoConfetti?: boolean;
+  triggerOnHover?: boolean;
+}
+
+const ConfettiButton = React.forwardRef<HTMLButtonElement, ConfettiButtonProps>(
+  (
+    {
+      className,
+      variant,
+      size,
+      animation,
+      asChild = false,
+      children,
+      icon,
+      iconPosition = "left",
+      loading = false,
+      confettiOptions = {
+        particleCount: 100,
+        spread: 70,
+      },
+      autoConfetti = false,
+      triggerOnHover = false,
+      ...props
+    },
+    ref
+  ) => {
+    const [scriptLoaded, setScriptLoaded] = useState(false);
+    const buttonRef = useRef<HTMLButtonElement | null>(null);
+
+    // Load confetti script dynamically
+    useEffect(() => {
+      if (!window.confetti) {
+        const script = document.createElement("script");
+        script.src =
+          "https://cdn.jsdelivr.net/npm/canvas-confetti@1.4.0/dist/confetti.browser.min.js";
+        script.async = true;
+        script.onload = () => setScriptLoaded(true);
+        document.body.appendChild(script);
+
+        return () => {
+          if (script.parentNode) {
+            script.parentNode.removeChild(script);
+          }
+        };
+      } else {
+        setScriptLoaded(true);
+      }
+    }, []);
+
+    // Auto confetti on mount if needed
+    useEffect(() => {
+      if (scriptLoaded && autoConfetti && window.confetti && buttonRef.current) {
+        const rect = buttonRef.current.getBoundingClientRect();
+        const x = (rect.left + rect.width / 2) / window.innerWidth;
+        const y = (rect.top + rect.height / 2) / window.innerHeight;
+
+        window.confetti({
+          ...confettiOptions,
+          origin: { x, y },
+        });
+      }
+    }, [scriptLoaded, autoConfetti, confettiOptions]);
+
+    const triggerConfetti = () => {
+      if (scriptLoaded && window.confetti && buttonRef.current) {
+        const rect = buttonRef.current.getBoundingClientRect();
+        const x = (rect.left + rect.width / 2) / window.innerWidth;
+        const y = (rect.top + rect.height / 2) / window.innerHeight;
+
+        window.confetti({
+          ...confettiOptions,
+          origin: { x, y },
+        });
+      }
+    };
+
+    return (
+      <button
+        ref={(node) => {
+          if (typeof ref === "function") ref(node);
+          else if (ref) ref.current = node;
+          buttonRef.current = node;
+        }}
+        className={cn(confettiButtonVariants({ variant, size, animation }), className)}
+        onClick={(e) => {
+          if (scriptLoaded) {
+            triggerConfetti();
+          }
+          props.onClick?.(e);
+        }}
+        onMouseEnter={triggerOnHover ? () => triggerConfetti() : undefined}
+        disabled={loading || props.disabled}
+        {...props}
+      >
+        {loading && <Loader2 className="h-4 w-4 mr-2 animate-spin" />}
+        {!loading && icon && iconPosition === "left" && (
+          <span className="mr-1">{icon}</span>
+        )}
+        {children}
+        {!loading && icon && iconPosition === "right" && (
+          <span className="ml-1">{icon}</span>
+        )}
+      </button>
+    );
+  }
+);
+
+ConfettiButton.displayName = "ConfettiButton";
+
+export { ConfettiButton, confettiButtonVariants };
+
+
+
+"use client";
+import React from "react";
+
+export interface GradientButtonProps
+  extends React.ButtonHTMLAttributes<HTMLButtonElement> {
+  children: React.ReactNode;
+  size?: "sm" | "md" | "lg" | "xl";
+  className?: string;
+  gradientColors?: string[];
+  animationSpeed?: number;
+  glowEffect?: boolean;
+  glowSize?: number;
+  variant?: "default" | "outline" | "ghost";
+}
+
+export function GradientButton({
+  children,
+  size = "md",
+  className = "",
+  gradientColors = [
+    "#ff6d1b",
+    "#ffee55",
+    "#5bff89",
+    "#4d8aff",
+    "#6b5fff",
+    "#ff64f9",
+    "#ff6565",
+  ],
+  animationSpeed = 2,
+  glowEffect = true,
+  glowSize = 4,
+  variant = "default",
+  ...props
+}: GradientButtonProps) {
+  // Generate gradient string from colors
+  const gradientString = gradientColors.join(", ");
+
+  // Size classes mapping
+  const sizeClasses = {
+    sm: "text-sm px-4 py-2 rounded-full",
+    md: "text-base px-6 py-2 rounded-full",
+    lg: "text-lg px-8 py-3 rounded-full",
+    xl: "text-2xl px-10 py-4 rounded-full",
+  };
+
+  // Border styles based on variant
+  const borderStyles = {
+    default: "border-transparent",
+    outline: "border-current",
+    ghost: "border-transparent bg-opacity-10",
+  };
+
+  return (
+    <>
+      <style
+        dangerouslySetInnerHTML={{
+          __html: `
+          .btn-gradient::before {
+            content: "";
+            background: linear-gradient(90deg, ${gradientString});
+            height: 30%;
+            width: 80%;
+            position: absolute;
+            bottom: -20%;
+            z-index: 0;
+            background-size: 200%;
+            animation: gradient-animate ${animationSpeed}s infinite linear;
+            filter: blur(calc(${glowSize} * 0.2rem));
+          }
+
+          .btn-gradient:hover,
+          .btn-gradient:hover::before {
+            animation: gradient-animate ${animationSpeed / 4}s infinite linear;
+          }
+
+          @keyframes gradient-animate {
+            0% {
+              background-position: 0;
+            }
+            100% {
+              background-position: 200%;
+            }
+          }
+
+          .btn-gradient {
+            animation: gradient-animate ${animationSpeed}s infinite linear;
+          }
+        `,
+        }}
+      />
+
+      <button
+        className={`
+          btn-gradient relative bg-black dark:bg-white text-white dark:text-black 
+          hover:bg-primary dark:hover:bg-primary/90
+          flex items-center
+           justify-center 
+          border-[0.15rem] Z-20 ${borderStyles[variant]} ${sizeClasses[size]} 
+          ${className}
+        `}
+        style={{
+          background:
+            variant === "ghost"
+              ? `linear-gradient(90deg, ${gradientString})`
+              : `
+   
+            `,
+          backgroundOrigin: "border-box",
+          backgroundClip: "padding-box, border-box, border-box",
+          backgroundSize: "200%",
+        }}
+        {...props}
+      >
+        {glowEffect && (
+          <div
+            className="absolute bottom-[-20%] h-[30%] w-[60%] z-[-1] blur-3xl"
+            style={{
+              left: "50%",
+              transform: "translateX(-50%)",
+              background: `linear-gradient(90deg, ${gradientString})`,
+              backgroundSize: "200%",
+              animation: `gradient-animate ${animationSpeed}s infinite linear`,
+            }}
+          />
+        )}
+
+        {children}
+      </button>
+    </>
+  );
+}
+
+export default GradientButton;
+
+
+
+
+import * as React from "react"
+import { cva, type VariantProps } from "class-variance-authority"
+import { cn } from "../lib/utils"
+
+const badgeVariants = cva(
+  "inline-flex items-center rounded-full border px-2.5 py-0.5 text-xs font-semibold transition-colors focus:outline-none focus:ring-2 focus:ring-ring focus:ring-offset-2",
+  {
+    variants: {
+      variant: {
+        default:
+          "border-transparent bg-primary text-primary-foreground",
+        secondary:
+          "border-transparent bg-secondary text-secondary-foreground",
+        destructive:
+          "border-transparent bg-red-500 text-foreground",
+        outline:
+          "text-foreground",
+        success:
+          "border-transparent bg-green-500 text-white",
+        warning:
+          "border-transparent bg-amber-500 text-white",
+        info:
+          "border-transparent bg-blue-500 text-white",
+      },
+      size: {
+        default: "px-2.5 py-0.5 text-xs",
+        sm: "px-2 py-0.5 text-xs",
+        lg: "px-3 py-1 text-sm",
+      },
+      shape: {
+        default: "rounded-full",
+        square: "rounded-sm",
+        rounded: "rounded-md",
+      }
+    },
+    defaultVariants: {
+      variant: "default",
+      size: "default",
+      shape: "default",
+    },
+  }
+)
+
+export interface BadgeProps
+  extends React.HTMLAttributes<HTMLDivElement>,
+    VariantProps<typeof badgeVariants> {
+  withDot?: boolean;
+  dotColor?: string;
+  interactive?: boolean;
+  highlighted?: boolean;
+}
+
+function Badge({ 
+  className, 
+  variant, 
+  size,
+  shape,
+  withDot,
+  dotColor = "currentColor",
+  interactive,
+  highlighted,
+  ...props 
+}: BadgeProps) {
+  return (
+    <div 
+      className={cn(
+        badgeVariants({ variant, size, shape }), 
+        interactive && "cursor-pointer hover:opacity-80",
+        highlighted && "ring-2 ring-offset-2 ring-ring",
+        className
+      )} 
+      {...props}
+    >
+      {withDot && (
+        <span 
+          className="mr-1 h-1.5 w-1.5 rounded-full inline-block" 
+          style={{ backgroundColor: dotColor }}
+        />
+      )}
+      {props.children}
+    </div>
+  )
+}
+
+export { Badge, badgeVariants }
+
+
+
+import * as React from "react";
+import { cn } from "../lib/utils";
+
+interface ProgressProps extends React.HTMLAttributes<HTMLDivElement> {
+  /** Current progress value */
+  value?: number;
+  /** Maximum progress value */
+  max?: number;
+  /** Optional class name for the indicator element */
+  indicatorClassName?: string;
+  /** Whether to show indeterminate loading animation */
+  indeterminate?: boolean;
+  /** Color variant for the progress bar */
+  color?: "default" | "primary" | "secondary" | "success" | "warning" | "danger";
+  /** Size variant of the progress bar */
+  size?: "sm" | "md" | "lg";
+  /** Whether to show the progress value as text */
+  showValue?: boolean;
+  /** Animation speed for the progress transitions */
+  animationSpeed?: "slow" | "normal" | "fast";
+}
+
+const Progress = React.forwardRef<HTMLDivElement, ProgressProps>(
+  ({ 
+    className, 
+    value = 0, 
+    max = 100, 
+    indicatorClassName,
+    indeterminate = false,
+    color = "default",
+    size = "md",
+    showValue = false,
+    animationSpeed = "normal",
+    ...props 
+  }, ref) => {
+    const percentage = value ? (value / max) * 100 : 0;
+    const [prevPercentage, setPrevPercentage] = React.useState(percentage);
+    const [isAnimating, setIsAnimating] = React.useState(false);
+    
+    React.useEffect(() => {
+      // Only animate when the value actually changes
+      if (percentage !== prevPercentage) {
+        setIsAnimating(true);
+        setPrevPercentage(percentage);
+        
+        // Reset the animation state after the transition is complete
+        const timeout = setTimeout(() => {
+          setIsAnimating(false);
+        }, 1000); // This should match the CSS transition duration
+        
+        return () => clearTimeout(timeout);
+      }
+    }, [percentage, prevPercentage]);
+    
+    // Color variants
+    const colorVariants = {
+      default: "bg-primary",
+      primary: "bg-primary",
+      secondary: "bg-secondary",
+      success: "bg-green-500",
+      warning: "bg-yellow-500",
+      danger: "bg-red-500"
+    };
+    
+    // Size variants
+    const sizeVariants = {
+      sm: "h-2",
+      md: "h-4",
+      lg: "h-6"
+    };
+    
+    // Animation speed variants
+    const animationVariants = {
+      slow: "duration-1000",
+      normal: "duration-700",
+      fast: "duration-300"
+    };
+    
+    return (
+      <div
+        ref={ref}
+        role="progressbar"
+        aria-valuemin={0}
+        aria-valuemax={max}
+        aria-valuenow={indeterminate ? undefined : value}
+        aria-valuetext={indeterminate ? undefined : `${Math.round(percentage)}%`}
+        className={cn(
+          "relative w-full overflow-hidden rounded-full bg-secondary",
+          sizeVariants[size],
+          className
+        )}
+        {...props}
+      >
+        <div
+          className={cn(
+            "h-full w-full flex-1",
+            colorVariants[color],
+            indeterminate ? "animate-progress-indeterminate origin-left" : "",
+            isAnimating ? "transition-all ease-out" : "",
+            animationVariants[animationSpeed],
+            indicatorClassName
+          )}
+          style={indeterminate ? {} : { transform: `translateX(-${100 - percentage}%)` }}
+        />
+        {showValue && (
+          <div className={cn(
+            "absolute inset-0 flex items-center justify-center text-xs font-semibold",
+            isAnimating ? "transition-opacity duration-300" : ""
+          )}>
+            {Math.round(percentage)}%
+          </div>
+        )}
+      </div>
+    );
+  }
+);
+Progress.displayName = "Progress";
+
+export { Progress };
+
+
+
+import * as React from "react";
+import { cn } from "../lib/utils";
+import { Check } from "lucide-react";
+
+export interface CheckboxProps extends React.InputHTMLAttributes<HTMLInputElement> {
+  checked?: boolean;
+  onCheckedChange?: (checked: boolean) => void;
+}
+
+const Checkbox = React.forwardRef<HTMLInputElement, CheckboxProps>(
+  ({ className, checked, onCheckedChange, ...props }, ref) => {
+    const [isChecked, setIsChecked] = React.useState(checked || false);
+    const [isAnimating, setIsAnimating] = React.useState(false);
+
+    React.useEffect(() => {
+      if (checked !== undefined) {
+        setIsChecked(checked);
+        setIsAnimating(true);
+        
+        // Reset animation state after transition completes
+        const timer = setTimeout(() => {
+          setIsAnimating(false);
+        }, 300);
+        
+        return () => clearTimeout(timer);
+      }
+    }, [checked]);
+
+    const handleChange = (event: React.ChangeEvent<HTMLInputElement>) => {
+      const newChecked = event.target.checked;
+      setIsChecked(newChecked);
+      setIsAnimating(true);
+      
+      // Reset animation state after transition completes
+      setTimeout(() => {
+        setIsAnimating(false);
+      }, 300);
+      
+      onCheckedChange?.(newChecked);
+      props.onChange?.(event);
+    };
+
+    return (
+      <div className="relative">
+        <input
+          type="checkbox"
+          className="absolute h-4 w-4 opacity-0"
+          ref={ref}
+          checked={isChecked}
+          onChange={handleChange}
+          {...props}
+        />
+        <div
+          className={cn(
+            "peer h-4 w-4 shrink-0 rounded-sm border   ring-offset-background",
+            "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2",
+            "disabled:cursor-not-allowed disabled:opacity-50",
+            "transition-all duration-300 ease-in-out",
+            isAnimating && "scale-110",
+            isChecked ? "bg-primary" : "bg-transparent hover:bg-primary/10",
+            className
+          )}
+        >
+          {isChecked && (
+            <div className={cn(
+              "flex items-center justify-center text-current",
+              "animate-in fade-in-0 zoom-in-0 duration-300"
+            )}>
+              <Check className="h-4 w-4 text-white dark:text-black" />
+            </div>
+          )}
+        </div>
+      </div>
+    );
+  }
+);
+Checkbox.displayName = "Checkbox";
+
+export { Checkbox };
+
+
+
+
+
+import * as React from "react";
+import { cn } from "../lib/utils";
+
+export interface TextareaProps extends React.TextareaHTMLAttributes<HTMLTextAreaElement> {}
+
+const Textarea = React.forwardRef<HTMLTextAreaElement, TextareaProps>(
+  ({ className, ...props }, ref) => {
+    return (
+      <textarea
+        className={cn(
+          `flex min-h-[80px] w-full rounded-md primarylw bg-background
+           px-3 py-2 text-sm ring-offset-background border border-gray-300 dark:border-gray-800
+           placeholder:text-muted-foreground focus-visible:outline-none 
+           focus-visible:ring-2 focus-visible:ring-ring 
+           focus-visible:ring-offset-2 disabled:cursor-not-allowed 
+           disabled:opacity-50`,
+          className
+        )}
+        ref={ref}
+        {...props}
+      />
+    );
+  }
+);
+Textarea.displayName = "Textarea";
+
+export { Textarea };
+
+
+
+import * as React from "react";
+import { cn } from "../lib/utils";
+
+interface ToggleGroupContextValue {
+  type: "single" | "multiple";
+  value: string | string[];
+  onChange: (value: string) => void;
+  size?: "default" | "sm" | "lg";
+  variant?: "default" | "outline";
+  disabled?: boolean;
+}
+
+const ToggleGroupContext = React.createContext<ToggleGroupContextValue | undefined>(undefined);
+
+function useToggleGroupContext() {
+  const context = React.useContext(ToggleGroupContext);
+  if (!context) {
+    throw new Error("useToggleGroupContext must be used within a ToggleGroup");
+  }
+  return context;
+}
+
+interface ToggleGroupProps {
+  type: "single" | "multiple";
+  value?: string | string[];
+  defaultValue?: string | string[];
+  onValueChange?: (value: string | string[]) => void;
+  disabled?: boolean;
+  variant?: "default" | "outline";
+  size?: "default" | "sm" | "lg";
+  className?: string;
+  children?: React.ReactNode;
+}
+
+const ToggleGroup = React.forwardRef<HTMLDivElement, ToggleGroupProps & Omit<React.HTMLAttributes<HTMLDivElement>, keyof ToggleGroupProps>>(
+  ({ 
+    className, 
+    type, 
+    value, 
+    defaultValue, 
+    onValueChange, 
+    variant = "default", 
+    size = "default", 
+    disabled = false,
+    children, 
+    ...props 
+  }, ref) => {
+    // Ensure value is always of the right type (string for single, string[] for multiple)
+    const ensureCorrectValueType = (val: string | string[] | undefined): string | string[] => {
+      if (val === undefined) return type === "single" ? "" : [];
+      if (type === "single") {
+        return Array.isArray(val) ? val[0] || "" : val;
+      } else {
+        return Array.isArray(val) ? val : val ? [val] : [];
+      }
+    };
+    
+    const [stateValue, setStateValue] = React.useState<string | string[]>(
+      ensureCorrectValueType(defaultValue)
+    );
+    
+    // Determine if the component is controlled or uncontrolled
+    const isControlled = value !== undefined;
+    const currentValue = isControlled ? ensureCorrectValueType(value) : stateValue;
+    
+    const handleValueChange = React.useCallback((itemValue: string) => {
+      if (disabled) return;
+      
+      const newValue = (() => {
+        if (type === "single") {
+          return itemValue;
+        }
+        
+        // For multiple selection
+        // Ensure currentValue is always treated as an array for "multiple" type
+        const values = Array.isArray(currentValue) ? currentValue : [currentValue].filter(Boolean);
+        return values.includes(itemValue)
+          ? values.filter((v) => v !== itemValue)
+          : [...values, itemValue];
+      })();
+      
+      if (!isControlled) {
+        setStateValue(newValue);
+      }
+      
+      onValueChange?.(newValue);
+    }, [type, currentValue, disabled, isControlled, onValueChange]);
+    
+    return (
+      <ToggleGroupContext.Provider
+        value={{
+          type,
+          value: currentValue,
+          onChange: handleValueChange,
+          size,
+          variant,
+          disabled,
+        }}
+      >
+        <div
+          ref={ref}
+          className={cn("flex items-center justify-center gap-1", className)}
+          role={type === "single" ? "radiogroup" : "group"}
+          {...props}
+        >
+          {children}
+        </div>
+      </ToggleGroupContext.Provider>
+    );
+  }
+);
+ToggleGroup.displayName = "ToggleGroup";
+
+interface ToggleGroupItemProps extends React.ButtonHTMLAttributes<HTMLButtonElement> {
+  value: string;
+  disabled?: boolean;
+  variant?: "default" | "outline";
+  size?: "default" | "sm" | "lg";
+  defaultPressed?: boolean;
+}
+
+const ToggleGroupItem = React.forwardRef<HTMLButtonElement, ToggleGroupItemProps>(
+  ({ className, children, value, variant, size, disabled: itemDisabled, defaultPressed, ...props }, ref) => {
+    const { type, value: groupValue, onChange, size: groupSize, variant: groupVariant, disabled: groupDisabled } = useToggleGroupContext();
+    
+    const isActive = type === "single" 
+      ? groupValue === value 
+      : Array.isArray(groupValue) 
+        ? groupValue.includes(value) 
+        : groupValue === value;
+    
+    const isDisabled = groupDisabled || itemDisabled;
+    
+    React.useEffect(() => {
+      // Handle defaultPressed if provided and the toggle is not already active
+      if (defaultPressed && !isActive && !isDisabled) {
+        onChange(value);
+      }
+    }, []);
+    
+    const handleClick = () => {
+      onChange(value);
+    };
+    
+    return (
+      <button
+        ref={ref}
+        type="button"
+        role={type === "single" ? "radio" : "checkbox"}
+        aria-checked={isActive}
+        aria-disabled={isDisabled}
+        disabled={isDisabled}
+        data-state={isActive ? "on" : "off"}
+        className={cn(
+          "inline-flex items-center justify-center gap-2 whitespace-nowrap rounded-md text-sm font-medium ring-offset-background transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 disabled:pointer-events-none disabled:opacity-50 data-[state=on]:bg-accent data-[state=on]:text-accent-foreground",
+          variant === "default" ? "bg-transparent" : "border   bg-transparent hover:bg-accent hover:text-accent-foreground",
+          size === "default" ? "h-10 px-3" : size === "sm" ? "h-9 px-2.5" : "h-11 px-5",
+          className
+        )}
+        onClick={handleClick}
+        {...props}
+      >
+        {children}
+      </button>
+    );
+  }
+);
+ToggleGroupItem.displayName = "ToggleGroupItem";
+
+export { ToggleGroup, ToggleGroupItem };
+
+
+
+
+import * as React from "react";
+import { cn } from "../lib/utils";
+
+interface AspectRatioProps extends React.HTMLAttributes<HTMLDivElement> {
+  /** The aspect ratio to maintain (width/height) */
+  ratio?: number;
+  /** Predefined aspect ratios for common use cases */
+  preset?: "square" | "video" | "portrait" | "widescreen" | "ultrawide" | "golden";
+  /** Whether to apply rounded corners */
+  rounded?: boolean;
+  /** Whether to show a border */
+  bordered?: boolean;
+  /** Optional object-fit style for child elements */
+  objectFit?: "cover" | "contain" | "fill" | "none" | "scale-down";
+}
+
+const AspectRatio = React.forwardRef<HTMLDivElement, AspectRatioProps>(
+  ({ 
+    className, 
+    ratio: propRatio, 
+    preset,
+    rounded = false,
+    bordered = false,
+    objectFit,
+    style, 
+    ...props 
+  }, ref) => {
+    // Predefined aspect ratios
+    const presetRatios = {
+      square: 1,             // 1:1
+      video: 16/9,           // 16:9
+      portrait: 3/4,         // 3:4
+      widescreen: 16/9,      // 16:9
+      ultrawide: 21/9,       // 21:9
+      golden: 1.618          // Golden ratio
+    };
+
+    // Determine the final ratio to use
+    const ratio = propRatio || (preset ? presetRatios[preset] : 1);
+
+    return (
+      <div
+        ref={ref}
+        style={{
+          position: "relative",
+          width: "100%",
+          paddingBottom: `${(1 / ratio) * 100}%`,
+          ...style,
+        }}
+        className={cn(
+          "overflow-hidden",
+          rounded && "rounded-md",
+          bordered && "border  ",
+          className
+        )}
+        {...props}
+      >
+        {props.children && (
+          <div 
+            className={cn(
+              "absolute inset-0 h-full w-full",
+              objectFit && `[&>img]:object-${objectFit} [&>video]:object-${objectFit}`
+            )}
+          >
+            {props.children}
+          </div>
+        )}
+      </div>
+    );
+  }
+);
+AspectRatio.displayName = "AspectRatio";
+
+export { AspectRatio };
+
+
+import * as React from "react";
+import { ChevronDown } from "lucide-react";
+import { cn } from "../lib/utils";
+
+// Context to manage the navigation menu state
+interface NavigationMenuContextType {
+  open: Record<string, boolean>;
+  activeItem: string | null;
+  toggleMenu: (id: string) => void;
+  setActiveItem: (id: string | null) => void;
+}
+
+const NavigationMenuContext = React.createContext<
+  NavigationMenuContextType | undefined
+>(undefined);
+
+// Root component
+interface NavigationMenuProps extends React.HTMLAttributes<HTMLDivElement> {}
+
+const NavigationMenu = React.forwardRef<HTMLDivElement, NavigationMenuProps>(
+  ({ className, children, ...props }, ref) => {
+    const [open, setOpen] = React.useState<Record<string, boolean>>({});
+    const [activeItem, setActiveItem] = React.useState<string | null>(null);
+
+    const toggleMenu = React.useCallback((id: string) => {
+      setOpen((prev) => ({
+        ...prev,
+        [id]: !prev[id],
+      }));
+    }, []);
+
+    return (
+      <NavigationMenuContext.Provider
+        value={{ open, activeItem, toggleMenu, setActiveItem }}
+      >
+        <div
+          ref={ref}
+          className={cn(
+            "relative z-10 flex max-w-max flex-1 items-center justify-center",
+            className
+          )}
+          {...props}
+        >
+          {children}
+          <NavigationMenuViewport />
+        </div>
+      </NavigationMenuContext.Provider>
+    );
+  }
+);
+NavigationMenu.displayName = "NavigationMenu";
+
+// List component
+interface NavigationMenuListProps
+  extends React.HTMLAttributes<HTMLUListElement> {}
+
+const NavigationMenuList = React.forwardRef<
+  HTMLUListElement,
+  NavigationMenuListProps
+>(({ className, ...props }, ref) => (
+  <ul
+    ref={ref}
+    className={cn(
+      "group flex flex-1 list-none items-center justify-center space-x-1",
+      className
+    )}
+    {...props}
+  />
+));
+NavigationMenuList.displayName = "NavigationMenuList";
+
+// MenuItem component
+interface NavigationMenuItemProps extends React.HTMLAttributes<HTMLLIElement> {
+  value?: string;
+}
+
+const NavigationMenuItem = React.forwardRef<
+  HTMLLIElement,
+  NavigationMenuItemProps
+>(({ className, value, ...props }, ref) => {
+  return (
+    <li
+      ref={ref}
+      className={cn("relative", className)}
+      data-value={value}
+      {...props}
+    />
+  );
+});
+NavigationMenuItem.displayName = "NavigationMenuItem";
+
+// Trigger style - now returns a string instead of using String constructor
+const navigationMenuTriggerStyle = () => {
+  return "group inline-flex h-10 w-max items-center justify-center rounded-md bg-background px-4 py-2 text-sm font-medium transition-colors hover:bg-accent hover:text-accent-foreground focus:bg-accent focus:text-accent-foreground focus:outline-none disabled:pointer-events-none disabled:opacity-50 data-[active]:bg-accent/50 data-[state=open]:bg-accent/50";
+};
+
+// Trigger component
+interface NavigationMenuTriggerProps
+  extends React.ButtonHTMLAttributes<HTMLButtonElement> {
+  id?: string;
+}
+
+const NavigationMenuTrigger = React.forwardRef<
+  HTMLButtonElement,
+  NavigationMenuTriggerProps
+>(({ className, children, id, ...props }, ref) => {
+  const menuId = id || React.useId();
+  const ctx = React.useContext(NavigationMenuContext);
+
+  if (!ctx) {
+    throw new Error("NavigationMenuTrigger must be used within NavigationMenu");
+  }
+
+  const { open, toggleMenu } = ctx;
+  const isOpen = open[menuId] || false;
+
+  return (
+    <button
+      ref={ref}
+      type="button"
+      className={cn(navigationMenuTriggerStyle(), "group", className)}
+      onClick={() => toggleMenu(menuId)}
+      aria-expanded={isOpen}
+      aria-controls={`nav-menu-${menuId}`}
+      data-state={isOpen ? "open" : "closed"}
+      {...props}
+    >
+      {children}{" "}
+      <ChevronDown
+        className="relative top-[1px] ml-1 h-3 w-3 transition duration-[200ms] group-data-[state=open]:rotate-180"
+        aria-hidden="true"
+      />
+    </button>
+  );
+});
+NavigationMenuTrigger.displayName = "NavigationMenuTrigger";
+
+// Content component
+interface NavigationMenuContentProps
+  extends React.HTMLAttributes<HTMLDivElement> {
+  id?: string;
+  forceMount?: boolean;
+}
+
+const NavigationMenuContent = React.forwardRef<
+  HTMLDivElement,
+  NavigationMenuContentProps
+>(({ className, children, id, forceMount = false, ...props }, ref) => {
+  const menuId = id || React.useId();
+  const ctx = React.useContext(NavigationMenuContext);
+
+  if (!ctx) {
+    throw new Error("NavigationMenuContent must be used within NavigationMenu");
+  }
+
+  const { open } = ctx;
+  const isOpen = open[menuId] || false;
+
+  if (!isOpen && !forceMount) return null;
+
+  return (
+    <div
+      ref={ref}
+      className={cn(
+        "absolute left-0 top-0 w-full data-[motion^=from-]:animate-in data-[motion^=to-]:animate-out data-[motion^=from-]:fade-in data-[motion^=to-]:fade-out data-[motion=from-end]:slide-in-from-right-52 data-[motion=from-start]:slide-in-from-left-52 data-[motion=to-end]:slide-out-to-right-52 data-[motion=to-start]:slide-out-to-left-52 md:absolute md:w-auto",
+        className
+      )}
+      id={`nav-menu-${menuId}`}
+      data-state={isOpen ? "open" : "closed"}
+      {...props}
+    >
+      {children}
+    </div>
+  );
+});
+NavigationMenuContent.displayName = "NavigationMenuContent";
+
+// Link component
+interface NavigationMenuLinkProps
+  extends React.AnchorHTMLAttributes<HTMLAnchorElement> {}
+
+const NavigationMenuLink = React.forwardRef<
+  HTMLAnchorElement,
+  NavigationMenuLinkProps
+>(({ className, children, ...props }, ref) => {
+  return (
+    <a
+      ref={ref}
+      className={cn(navigationMenuTriggerStyle(), className)}
+      {...props}
+    >
+      {children}
+    </a>
+  );
+});
+NavigationMenuLink.displayName = "NavigationMenuLink";
+
+// Viewport component
+interface NavigationMenuViewportProps
+  extends React.HTMLAttributes<HTMLDivElement> {}
+
+const NavigationMenuViewport = React.forwardRef<
+  HTMLDivElement,
+  NavigationMenuViewportProps
+>(({ className, ...props }, ref) => {
+  const viewportRef = React.useRef<HTMLDivElement>(null);
+  const ctx = React.useContext(NavigationMenuContext);
+
+  if (!ctx) {
+    return null;
+  }
+
+  const hasOpenMenu = Object.values(ctx.open).some(Boolean);
+
+  return (
+    <div className={cn("absolute left-0 top-full flex justify-center")}>
+      <div
+        ref={viewportRef}
+        className={cn(
+          "origin-top-center relative mt-1.5 h-[var(--radix-navigation-menu-viewport-height)] w-full overflow-hidden rounded-md border bg-popover text-popover-foreground shadow-lg md:w-[var(--radix-navigation-menu-viewport-width)]",
+          !hasOpenMenu && "hidden",
+          className
+        )}
+        {...props}
+      />
+    </div>
+  );
+});
+NavigationMenuViewport.displayName = "NavigationMenuViewport";
+
+// Indicator component
+interface NavigationMenuIndicatorProps
+  extends React.HTMLAttributes<HTMLDivElement> {}
+
+const NavigationMenuIndicator = React.forwardRef<
+  HTMLDivElement,
+  NavigationMenuIndicatorProps
+>(({ className, ...props }, ref) => {
+  const ctx = React.useContext(NavigationMenuContext);
+
+  if (!ctx) {
+    return null;
+  }
+
+  const hasActiveItem = !!ctx.activeItem;
+
+  if (!hasActiveItem) return null;
+
+  return (
+    <div
+      ref={ref}
+      className={cn(
+        "top-full z-[1] flex h-1.5 items-end justify-center overflow-hidden data-[state=visible]:animate-in data-[state=hidden]:animate-out data-[state=hidden]:fade-out data-[state=visible]:fade-in",
+        className
+      )}
+      data-state={hasActiveItem ? "visible" : "hidden"}
+      {...props}
+    >
+      <div className="relative top-[60%] h-2 w-2 rotate-45 rounded-tl-sm bg-background shadow-md" />
+    </div>
+  );
+});
+NavigationMenuIndicator.displayName = "NavigationMenuIndicator";
+
+export {
+  navigationMenuTriggerStyle,
+  NavigationMenu,
+  NavigationMenuList,
+  NavigationMenuItem,
+  NavigationMenuContent,
+  NavigationMenuTrigger,
+  NavigationMenuLink,
+  NavigationMenuIndicator,
+  NavigationMenuViewport,
+};
+
+
+
+
+
+import * as React from "react"
+import { ChevronLeft, ChevronRight, MoreHorizontal } from "lucide-react"
+
+import { cn } from "../lib/utils"
+import { buttonVariants } from "./button"
+
+const Pagination = ({ className, ...props }: React.ComponentProps<"nav">) => (
+  <nav
+    role="navigation"
+    aria-label="pagination"
+    className={cn("mx-auto flex w-full justify-center", className)}
+    {...props}
+  />
+)
+Pagination.displayName = "Pagination"
+
+const PaginationContent = React.forwardRef<
+  HTMLUListElement,
+  React.ComponentProps<"ul">
+>(({ className, ...props }, ref) => (
+  <ul
+    ref={ref}
+    className={cn("flex flex-row items-center gap-1", className)}
+    {...props}
+  />
+))
+PaginationContent.displayName = "PaginationContent"
+
+const PaginationItem = React.forwardRef<
+  HTMLLIElement,
+  React.ComponentProps<"li">
+>(({ className, ...props }, ref) => (
+  <li ref={ref} className={cn("", className)} {...props} />
+))
+PaginationItem.displayName = "PaginationItem"
+
+type PaginationLinkProps = {
+  isActive?: boolean
+  sizeValue?: "default" | "sm" | "lg" | "icon"
+} & React.ComponentProps<"a">
+
+const PaginationLink = ({
+  className,
+  isActive,
+  sizeValue = "icon",
+  ...props
+}: PaginationLinkProps) => (
+  <a
+    aria-current={isActive ? "page" : undefined}
+    className={cn(
+      buttonVariants({
+        variant: isActive ? "outline" : "ghost",
+        size: sizeValue,
+      }),
+      className
+    )}
+    {...props}
+  />
+)
+PaginationLink.displayName = "PaginationLink"
+
+const PaginationPrevious = ({
+  className,
+  ...props
+}: React.ComponentProps<typeof PaginationLink>) => (
+  <PaginationLink
+    aria-label="Go to previous page"
+    sizeValue="default"
+    className={cn("gap-1 pl-2.5", className)}
+    {...props}
+  >
+    <ChevronLeft className="h-4 w-4" />
+    <span>Previous</span>
+  </PaginationLink>
+)
+PaginationPrevious.displayName = "PaginationPrevious"
+
+const PaginationNext = ({
+  className,
+  ...props
+}: React.ComponentProps<typeof PaginationLink>) => (
+  <PaginationLink
+    aria-label="Go to next page"
+    sizeValue="default"
+    className={cn("gap-1 pr-2.5", className)}
+    {...props}
+  >
+    <span>Next</span>
+    <ChevronRight className="h-4 w-4" />
+  </PaginationLink>
+)
+PaginationNext.displayName = "PaginationNext"
+
+const PaginationEllipsis = ({
+  className,
+  ...props
+}: React.ComponentProps<"span">) => (
+  <span
+    aria-hidden
+    className={cn("flex h-9 w-9 items-center justify-center", className)}
+    {...props}
+  >
+    <MoreHorizontal className="h-4 w-4" />
+    <span className="sr-only">More pages</span>
+  </span>
+)
+PaginationEllipsis.displayName = "PaginationEllipsis"
+
+export {
+  Pagination,
+  PaginationContent,
+  PaginationEllipsis,
+  PaginationItem,
+  PaginationLink,
+  PaginationNext,
+  PaginationPrevious,
+}
+
+
+
+import * as React from "react";
+import { ChevronRight, ChevronLeft } from "lucide-react";
+import { motion, useInView, HTMLMotionProps } from "framer-motion";
+import { twMerge } from "tailwind-merge";
+import clsx from "clsx";
+
+// Re-implementing the 'cn' utility function directly for self-containment
+function cn(...inputs: clsx.ClassValue[]) {
+  return twMerge(clsx(inputs));
+}
+
+interface SidebarContextType {
+  expanded: boolean;
+  onChange: (expanded: boolean) => void;
+  activeMenuItem: string | null;
+  setActiveMenuItem: (id: string | null) => void;
+  menuItemPosition: React.MutableRefObject<{
+    left: number;
+    width: number;
+    top: number;
+    height: number;
+  }>;
+  menuItemRefs: React.MutableRefObject<Map<string, HTMLDivElement | null>>;
+  menuRef: React.RefObject<HTMLDivElement>;
+  updateIndicatorPosition: (id: string | null) => void;
+  // New: Function to notify provider when a menu item ref is added/removed
+  notifyMenuItemRefChange: () => void;
+}
+
+const SidebarContext = React.createContext<SidebarContextType | undefined>(
+  undefined
+);
+
+interface SidebarProviderProps {
+  defaultExpanded?: boolean;
+  expanded?: boolean;
+  onExpandedChange?: (expanded: boolean) => void;
+  children: React.ReactNode;
+}
+
+export function SidebarProvider({
+  defaultExpanded = true,
+  expanded: controlledExpanded,
+  onExpandedChange,
+  children,
+}: SidebarProviderProps) {
+  const [expanded, setExpanded] = React.useState(defaultExpanded);
+  const [activeMenuItem, setActiveMenuItem] = React.useState<string | null>(
+    null
+  );
+  const menuItemPosition = React.useRef({
+    left: 0,
+    width: 0,
+    top: 0,
+    height: 0,
+  });
+  const menuItemRefs = React.useRef<Map<string, HTMLDivElement | null>>(
+    new Map()
+  );
+  const menuRef = React.useRef<HTMLDivElement>(null);
+
+  // NEW: State to force re-evaluation when menuItemRefs content might have changed
+  const [menuRefsVersion, setMenuRefsVersion] = React.useState(0);
+
+  const isControlled = controlledExpanded !== undefined;
+  const actualExpanded = isControlled ? controlledExpanded : expanded;
+
+  const onExpandedChangeRef = React.useRef(onExpandedChange);
+
+  React.useEffect(() => {
+    onExpandedChangeRef.current = onExpandedChange;
+  }, [onExpandedChange]);
+
+  const handleExpandedChange = React.useCallback(
+    (value: boolean) => {
+      if (!isControlled) {
+        setExpanded(value);
+      }
+      onExpandedChangeRef.current?.(value);
+    },
+    [isControlled]
+  );
+
+  // NEW: Callback to increment the version when a menu item ref is added/removed
+  const notifyMenuItemRefChange = React.useCallback(() => {
+    setMenuRefsVersion((prev) => prev + 1);
+  }, []);
+
+  // Helper function to encapsulate indicator positioning logic
+  const updateIndicatorPosition = React.useCallback(
+    (id: string | null) => {
+      const indicator = menuRef.current?.querySelector(
+        ".sidebar-menu-indicator"
+      ) as HTMLElement | null;
+
+      if (id && menuRef.current) {
+        const selectedItem = menuItemRefs.current.get(id);
+        if (selectedItem) {
+          const menuRect = menuRef.current.getBoundingClientRect();
+          const rect = selectedItem.getBoundingClientRect();
+
+          menuItemPosition.current = {
+            left: rect.left - menuRect.left,
+            width: rect.width,
+            top: rect.top - menuRect.top,
+            height: rect.height,
+          };
+
+          if (indicator) {
+            indicator.style.left = `${menuItemPosition.current.left}px`;
+            indicator.style.width = `${menuItemPosition.current.width}px`;
+            indicator.style.top = `${menuItemPosition.current.top}px`;
+            indicator.style.height = `${menuItemPosition.current.height}px`;
+            indicator.style.opacity = "1";
+          }
+        } else {
+          // If selectedItem is not found (e.g., not yet mounted or invalid ID)
+          // Ensure the indicator is hidden until the item is ready
+          if (indicator) {
+            indicator.style.opacity = "0";
+          }
+        }
+      } else {
+        // If no active ID, hide the indicator
+        if (indicator) {
+          indicator.style.opacity = "0";
+        }
+      }
+    },
+    [menuItemRefs, menuRef, menuItemPosition]
+  );
+
+  // Effect to set active menu item from URL
+  React.useEffect(() => {
+    const url = new URL(window.location.href);
+    const searchParams = url.searchParams;
+    const path = url.pathname;
+
+    let potentialMenuItemValue: string | null = null;
+
+    if (searchParams.has("component")) {
+      potentialMenuItemValue = searchParams.get("component");
+    } else {
+      const pathSegments = path.split("/").filter((segment) => segment);
+      if (pathSegments.length > 0) {
+        potentialMenuItemValue = pathSegments[pathSegments.length - 1];
+      }
+    }
+    setActiveMenuItem(potentialMenuItemValue);
+    // No need to call updateIndicatorPosition directly here.
+    // The useLayoutEffect below, which depends on menuRefsVersion, will handle it.
+  }, [window.location.pathname, window.location.search]);
+
+  // Primary useLayoutEffect for synchronous indicator updates
+  React.useLayoutEffect(() => {
+    // This effect runs whenever activeMenuItem changes OR when menuRefsVersion increments.
+    // By depending on menuRefsVersion, we ensure that if an item registers its ref
+    // AFTER activeMenuItem is set (e.g., on initial load/navigation),
+    // this effect will
+    // re-run and find the newly available ref.
+    updateIndicatorPosition(activeMenuItem);
+  }, [activeMenuItem, menuRefsVersion, menuRef, updateIndicatorPosition]);
+
+  // Effect to re-adjust on window resize/layout changes
+  React.useEffect(() => {
+    const handleResize = () => {
+      if (activeMenuItem) {
+        updateIndicatorPosition(activeMenuItem);
+      }
+    };
+
+    window.addEventListener("resize", handleResize);
+    return () => window.removeEventListener("resize", handleResize);
+  }, [activeMenuItem, updateIndicatorPosition]);
+
+  return (
+    <SidebarContext.Provider
+      value={{
+        expanded: actualExpanded,
+        onChange: handleExpandedChange,
+        activeMenuItem,
+        setActiveMenuItem,
+        menuItemPosition,
+        menuItemRefs,
+        menuRef,
+        updateIndicatorPosition,
+        notifyMenuItemRefChange, // Expose the new notification function
+      }}
+    >
+      {children}
+    </SidebarContext.Provider>
+  );
+}
+
+export function useSidebar() {
+  const context = React.useContext(SidebarContext);
+
+  if (!context) {
+    throw new Error("useSidebar must be used within a SidebarProvider");
+  }
+
+  return context;
+}
+
+interface SidebarProps extends React.HTMLAttributes<HTMLDivElement> {}
+
+export function Sidebar({ className, children, ...props }: SidebarProps) {
+  const { expanded } = useSidebar();
+
+  return (
+    <div
+      className={cn(
+        "h-full min-h-screen z-40 w-56 relative",
+        // expanded ? "" : "w-16",
+        "bg-background border-r   shadow-sm",
+        "fixed lg:sticky top-0 md:top-0",
+        expanded ? "left-0" : "md:left-0 -left-full",
+        className
+      )}
+      role="complementary"
+      data-collapsed={!expanded}
+      {...props}
+    >
+      {children}
+    </div>
+  );
+}
+
+interface SidebarTriggerProps
+  extends React.ButtonHTMLAttributes<HTMLButtonElement> {}
+
+export function SidebarTrigger({ className, ...props }: SidebarTriggerProps) {
+  const { expanded, onChange } = useSidebar();
+
+  return (
+    <button
+      type="button"
+      className={cn(
+        "inline-flex items-center justify-center rounded-md p-2 text-muted-foreground hover:bg-accent hover:text-accent-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
+        "fixed md:static z-50 left-4 top-20",
+        className
+      )}
+      onClick={() => onChange(!expanded)}
+      aria-label={expanded ? "Close sidebar" : "Open sidebar"}
+      {...props}
+    >
+      <span className="sr-only">
+        {expanded ? "Close sidebar" : "Open sidebar"}
+      </span>
+      {expanded ? (
+        <ChevronLeft className="h-4 w-4" />
+      ) : (
+        <ChevronRight className="h-4 w-4" />
+      )}
+    </button>
+  );
+}
+
+interface SidebarHeaderProps extends React.HTMLAttributes<HTMLDivElement> {}
+
+export function SidebarHeader({
+  className,
+  children,
+  ...props
+}: SidebarHeaderProps) {
+  const { expanded } = useSidebar();
+
+  return (
+    <div
+      className={cn(
+        "flex h-16 items-center border-b   px-4",
+        expanded ? "justify-between" : "justify-center",
+        className
+      )}
+      {...props}
+    >
+      {children}
+    </div>
+  );
+}
+
+interface SidebarContentProps extends React.HTMLAttributes<HTMLDivElement> {}
+
+export function SidebarContent({
+  className,
+  children,
+  ...props
+}: SidebarContentProps) {
+  const scrollRef = React.useRef<HTMLDivElement>(null);
+
+  return (
+    <div
+      className={cn(
+        "flex-1 overflow-hidden h-[calc(100vh-4rem)] space-y-4 ",
+        className
+      )}
+      {...props}
+    >
+      <div ref={scrollRef} className="h-full pb-12 overflow-auto scrollbar-hide ">
+        {children}
+      </div>
+    </div>
+  );
+}
+
+interface SidebarGroupProps extends React.HTMLAttributes<HTMLDivElement> {}
+
+export function SidebarGroup({
+  className,
+  children,
+  ...props
+}: SidebarGroupProps) {
+  return (
+    <div className={cn("px-2 py-4", className)} {...props}>
+      {children}
+    </div>
+  );
+}
+
+interface SidebarGroupLabelProps extends React.HTMLAttributes<HTMLDivElement> {}
+
+export function SidebarGroupLabel({
+  className,
+  children,
+  ...props
+}: SidebarGroupLabelProps) {
+  const { expanded } = useSidebar();
+
+  if (!expanded) {
+    return null;
+  }
+
+  return (
+    <div
+      className={cn(
+        "mb-2 px-2 text-md md:text-sm font-semibold md:font-bold tracking-tight",
+        className
+      )}
+      {...props}
+    >
+      {children}
+    </div>
+  );
+}
+
+interface SidebarGroupContentProps
+  extends React.HTMLAttributes<HTMLDivElement> {}
+
+export function SidebarGroupContent({
+  className,
+  children,
+  ...props
+}: SidebarGroupContentProps) {
+  return (
+    <div className={cn("space-y-1", className)} {...props}>
+      {children}
+    </div>
+  );
+}
+
+interface SidebarFooterProps extends React.HTMLAttributes<HTMLDivElement> {}
+
+export function SidebarFooter({
+  className,
+  children,
+  ...props
+}: SidebarFooterProps) {
+  const { expanded } = useSidebar();
+
+  return (
+    <div
+      className={cn(
+        "flex border-t   p-4",
+        expanded
+          ? "flex-row items-center justify-between"
+          : "flex-col justify-center",
+        className
+      )}
+      {...props}
+    >
+      {children}
+    </div>
+  );
+}
+
+interface SidebarMenuProps extends React.HTMLAttributes<HTMLDivElement> {}
+
+export function SidebarMenu({
+  className,
+  children,
+  ...props
+}: SidebarMenuProps) {
+  const { menuRef } = useSidebar();
+
+  return (
+    // In your SidebarMenu component's div for the indicator:
+    <div ref={menuRef} className={cn("relative", className)} {...props}>
+      <div
+        className="sidebar-menu-indicator opacity-0 absolute ease-in-out 
+      rounded-md bg-primarylw/10 dark:bg-greedy/10 border border-primarylw dark:border-greedy"
+      />
+      <div
+        className="sidebar-menu-indicator/10 opacity-0 absolute 
+        ease-in-out 
+      rounded-md bg-primarylw/10 dark:bg-greedy/10"
+      />{" "}
+      {/* Removed border classes */}
+      {children}
+    </div>
+  );
+}
+
+// FIX: Omit conflicting framer-motion props from HTMLDivElement attributes
+interface SidebarMenuItemProps
+  extends Omit<
+    React.HTMLAttributes<HTMLDivElement>,
+    | "onDrag"
+    | "onDragStart"
+    | "onDragEnd"
+    | "onAnimationStart"
+    | "onAnimationEnd"
+  > {
+  value?: string;
+}
+
+export function SidebarMenuItem({
+  className,
+  children,
+  value,
+  ...props
+}: SidebarMenuItemProps) {
+  const itemRef = React.useRef<HTMLDivElement>(null);
+  // NEW: Get notifyMenuItemRefChange from context
+  const { activeMenuItem, menuItemRefs, notifyMenuItemRefChange } =
+    useSidebar();
+  const menuItemId = value || React.useId();
+  const isActive = activeMenuItem === menuItemId;
+
+  const isInView = useInView(itemRef, { once: false, amount: 0.5 });
+
+  // Register this menu item when it mounts
+  // and NOTIFY the provider about the change
+  React.useEffect(() => {
+    if (itemRef.current) {
+      menuItemRefs.current.set(menuItemId, itemRef.current);
+      // Notify the provider that a ref has been added, potentially triggering
+      // the useLayoutEffect if this item is the active one.
+      notifyMenuItemRefChange();
+    }
+    return () => {
+      menuItemRefs.current.delete(menuItemId);
+      // Also notify when a ref is removed (component unmounts)
+      notifyMenuItemRefChange();
+    };
+  }, [menuItemRefs, menuItemId, notifyMenuItemRefChange]); // Added notifyMenuItemRefChange to deps
+
+  return (
+    <motion.div
+      ref={itemRef}
+      className={cn("mb-1 scrollbar-hide", className)}
+      data-value={menuItemId}
+      data-state={isActive ? "active" : "inactive"}
+      initial={{ scale: 1, opacity: 0.5, x: -0 }}
+      animate={{
+        scale: isInView ? 1 : 0.6,
+        opacity: isInView ? 1 : 0.5,
+        x: isInView ? 0 : -60,
+      }}
+      transition={{ duration: 0.4, ease: "easeOut" }}
+      {...(props as HTMLMotionProps<"div">)}
+    >
+      {children}
+    </motion.div>
+  );
+}
+
+interface SidebarMenuButtonProps extends React.HTMLAttributes<HTMLDivElement> {
+  asChild?: boolean;
+  value?: string;
+}
+
+export function SidebarMenuButton({
+  className,
+  children,
+  asChild = false,
+  value,
+  ...props
+}: SidebarMenuButtonProps) {
+  const {
+    expanded,
+    activeMenuItem,
+    setActiveMenuItem,
+    updateIndicatorPosition,
+  } = useSidebar();
+  const menuItemId = value || React.useId();
+  const isActive = activeMenuItem === menuItemId;
+
+  const handleClick = React.useCallback(() => {
+    setActiveMenuItem(menuItemId);
+    // Explicitly call updateIndicatorPosition immediately on click.
+    // This provides immediate visual feedback for direct clicks, overriding
+    // any potential slight delay from the useLayoutEffect waiting for version update.
+    updateIndicatorPosition(menuItemId);
+
+    if (props.onClick && typeof props.onClick === "function") {
+      const dummyEvent = {
+        currentTarget: {} as EventTarget & HTMLDivElement,
+        target: {} as EventTarget,
+        preventDefault: () => {},
+        stopPropagation: () => {},
+      } as React.MouseEvent<HTMLDivElement>;
+      props.onClick(dummyEvent);
+    }
+  }, [menuItemId, setActiveMenuItem, updateIndicatorPosition, props.onClick]);
+
+  const sharedClassName =
+    "flex cursor-pointer items-center rounded-md px-3 py-2 text-sm hover:bg-accent hover:text-accent-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring ";
+
+  if (!expanded) {
+    if (asChild) {
+      return (
+        <div
+          className={className}
+          data-active={isActive ? "true" : "false"}
+          onClick={handleClick}
+          {...props}
+        >
+          {React.Children.map(children, (child) => {
+            if (React.isValidElement(child)) {
+              return React.cloneElement(child, {
+                ...child.props,
+                className: cn(
+                  sharedClassName,
+                  "justify-center p-2",
+                  "hover:bg-primary/10 hover:scale-110",
+                  isActive ? "text-primary font-medium" : "",
+                  child.props?.className
+                ),
+              });
+            }
+            return child;
+          })}
+        </div>
+      );
+    }
+
+    return (
+      <div
+        className={cn(
+          sharedClassName,
+          "justify-center p-2",
+          "hover:bg-primary/10 hover:scale-110",
+          isActive ? "text-primary font-medium" : "",
+          className
+        )}
+        data-active={isActive ? "true" : "false"}
+        onClick={handleClick}
+        {...props}
+      >
+        {React.Children.toArray(children).filter(
+          (child) =>
+            React.isValidElement(child) && typeof child.type !== "string"
+        )}
+      </div>
+    );
+  }
+
+  if (asChild) {
+    return (
+      <div
+        className={className}
+        data-active={isActive ? "true" : "false"}
+        onClick={handleClick}
+        {...props}
+      >
+        {React.Children.map(children, (child) => {
+          if (React.isValidElement(child)) {
+            return React.cloneElement(child, {
+              ...child.props,
+              className: cn(
+                sharedClassName,
+                "justify-start gap-2",
+                "hover:bg-primary/10 hover:translate-x-1",
+                isActive ? "text-primary font-medium" : "",
+                child.props?.className
+              ),
+            });
+          }
+          return child;
+        })}
+      </div>
+    );
+  }
+
+  return (
+    <div
+      className={cn(
+        sharedClassName,
+        "justify-start gap-2",
+        "hover:bg-primary/10 hover:translate-x-1",
+        isActive ? "text-primary font-medium" : "",
+        className
+      )}
+      data-active={isActive ? "true" : "false"}
+      onClick={handleClick}
+      {...props}
+    >
+      {children}
+    </div>
+  );
+}
+
+export { Sidebar as SidebarRoot };
+
+
+"use client";
+
+import React, { useEffect, useRef, useState, useMemo } from "react";
+import { motion, AnimatePresence, useMotionValue, easeIn, easeOut } from "framer-motion";
+import { cn } from "../lib/utils"; // Assuming you have this utility for class names
+import { animate } from "framer-motion";
+
+export interface Draggable3DImageRingProps {
+  /** Array of image URLs to display in the ring */
+  images: string[];
+  /** Container width in pixels (will be scaled) */
+  width?: number;
+  /** 3D perspective value */
+  perspective?: number;
+  /** Distance of images from center (z-depth) */
+  imageDistance?: number;
+  /** Initial rotation of the ring */
+  initialRotation?: number;
+  /** Animation duration for entrance */
+  animationDuration?: number;
+  /** Stagger delay between images */
+  staggerDelay?: number;
+  /** Hover opacity for non-hovered images */
+  hoverOpacity?: number;
+  /** Custom container className */
+  containerClassName?: string;
+  /** Custom ring className */
+  ringClassName?: string;
+  /** Custom image className */
+  imageClassName?: string;
+  /** Background color of the stage */
+  backgroundColor?: string;
+  /** Enable/disable drag functionality */
+  draggable?: boolean;
+  /** Animation ease for entrance */
+  ease?: string;
+  /** Breakpoint for mobile responsiveness (e.g., 768 for iPad mini) */
+  mobileBreakpoint?: number;
+  /** Scale factor for mobile (e.g., 0.7 for 70% size) */
+  mobileScaleFactor?: number;
+  /** Power for the drag end inertia animation (higher means faster stop) */
+  inertiaPower?: number;
+  /** Time constant for the drag end inertia animation (duration of deceleration in ms) */
+  inertiaTimeConstant?: number;
+  /** Multiplier for initial velocity when drag ends (influences initial "spin") */
+  inertiaVelocityMultiplier?: number;
+}
+
+export function Draggable3DImageRing({
+  images,
+  width = 300,
+  perspective = 2000,
+  imageDistance = 500,
+  initialRotation = 180,
+  animationDuration = 1.5,
+  staggerDelay = 0.1,
+  hoverOpacity = 0.5,
+  containerClassName,
+  ringClassName,
+  imageClassName,
+  backgroundColor,
+  draggable = true,
+  ease = "easeOut",
+  mobileBreakpoint = 768,
+  mobileScaleFactor = 0.8,
+  inertiaPower = 0.8, // Default power for inertia
+  inertiaTimeConstant = 300, // Default time constant for inertia
+  inertiaVelocityMultiplier = 20, // Default multiplier for initial spin
+}: Draggable3DImageRingProps) {
+  const containerRef = useRef<HTMLDivElement>(null);
+  const ringRef = useRef<HTMLDivElement>(null);
+
+  const rotationY = useMotionValue(initialRotation);
+  const startX = useRef<number>(0);
+  const currentRotationY = useRef<number>(initialRotation);
+  const isDragging = useRef<boolean>(false);
+  const velocity = useRef<number>(0); // To track drag velocity
+
+  const [currentScale, setCurrentScale] = useState(1);
+  const [showImages, setShowImages] = useState(false);
+
+  const angle = useMemo(() => 360 / images.length, [images.length]);
+
+  const getBgPos = (imageIndex: number, currentRot: number, scale: number) => {
+    const scaledImageDistance = imageDistance * scale;
+    const effectiveRotation = currentRot - 180 - imageIndex * angle;
+    const parallaxOffset = ((effectiveRotation % 360 + 360) % 360) / 360;
+    return `${-(parallaxOffset * (scaledImageDistance / 1.5))}px 0px`;
+  };
+
+  useEffect(() => {
+    const unsubscribe = rotationY.on("change", (latestRotation) => {
+      if (ringRef.current) {
+        Array.from(ringRef.current.children).forEach((imgElement, i) => {
+          (imgElement as HTMLElement).style.backgroundPosition = getBgPos(
+            i,
+            latestRotation,
+            currentScale
+          );
+        });
+      }
+      currentRotationY.current = latestRotation;
+    });
+    return () => unsubscribe();
+  }, [rotationY, images.length, imageDistance, currentScale, angle]);
+
+  useEffect(() => {
+    const handleResize = () => {
+      const viewportWidth = window.innerWidth;
+      const newScale = viewportWidth <= mobileBreakpoint ? mobileScaleFactor : 1;
+      setCurrentScale(newScale);
+    };
+
+    window.addEventListener("resize", handleResize);
+    handleResize();
+
+    return () => window.removeEventListener("resize", handleResize);
+  }, [mobileBreakpoint, mobileScaleFactor]);
+
+  useEffect(() => {
+    setShowImages(true);
+  }, []);
+
+  const handleDragStart = (event: React.MouseEvent | React.TouchEvent) => {
+    if (!draggable) return;
+    isDragging.current = true;
+    const clientX = "touches" in event ? event.touches[0].clientX : event.clientX;
+    startX.current = clientX;
+    // Stop any ongoing animation instantly when drag starts
+    rotationY.stop();
+    velocity.current = 0; // Reset velocity
+    if (ringRef.current) {
+      (ringRef.current as HTMLElement).style.cursor = "grabbing";
+    }
+    // Attach global move and end listeners to document when dragging starts
+    document.addEventListener("mousemove", handleDrag);
+    document.addEventListener("mouseup", handleDragEnd);
+    document.addEventListener("touchmove", handleDrag);
+    document.addEventListener("touchend", handleDragEnd);
+  };
+
+  const handleDrag = (event: MouseEvent | TouchEvent) => {
+    // Only proceed if dragging is active
+    if (!draggable || !isDragging.current) return;
+
+    const clientX = "touches" in event ? (event as TouchEvent).touches[0].clientX : (event as MouseEvent).clientX;
+    const deltaX = clientX - startX.current;
+
+    // Update velocity based on deltaX
+    velocity.current = -deltaX * 0.5; // Factor of 0.5 to control sensitivity
+
+    rotationY.set(currentRotationY.current + velocity.current);
+
+    startX.current = clientX;
+  };
+
+const handleDragEnd = () => {
+  isDragging.current = false;
+  if (ringRef.current) {
+    ringRef.current.style.cursor = "grab";
+    currentRotationY.current = rotationY.get();
+  }
+
+  document.removeEventListener("mousemove", handleDrag);
+  document.removeEventListener("mouseup", handleDragEnd);
+  document.removeEventListener("touchmove", handleDrag);
+  document.removeEventListener("touchend", handleDragEnd);
+
+  const initial = rotationY.get();
+  const velocityBoost = velocity.current * inertiaVelocityMultiplier;
+  const target = initial + velocityBoost;
+
+  // Animate with inertia manually using `animate()`
+  animate(initial, target, {
+    type: "inertia",
+    velocity: velocityBoost,
+    power: inertiaPower,
+    timeConstant: inertiaTimeConstant,
+    restDelta: 0.5,
+    modifyTarget: (target) => Math.round(target / angle) * angle,
+    onUpdate: (latest) => {
+      rotationY.set(latest);
+    },
+  });
+
+  velocity.current = 0;
+};
+
+
+  // Corrected imageVariants: no function for 'visible' state
+  const imageVariants = {
+    hidden: { y: 200, opacity: 0 },
+    visible: {
+      y: 0,
+      opacity: 1,
+      // Transition properties will be defined directly on the motion.div using `custom` prop
+    },
+  };
+
+  return (
+    <div
+      ref={containerRef}
+      className={cn(
+        "w-full h-full overflow-hidden select-none relative",
+        containerClassName
+      )}
+      style={{
+        backgroundColor,
+        transform: `scale(${currentScale})`,
+        transformOrigin: "center center",
+      }}
+      // Attach initial drag start listeners only
+      onMouseDown={draggable ? handleDragStart : undefined}
+      onTouchStart={draggable ? handleDragStart : undefined}
+    >
+      <div
+        style={{
+          perspective: `${perspective}px`,
+          width: `${width}px`,
+          height: `${width * 1.33}px`,
+          position: "absolute",
+          left: "50%",
+          top: "50%",
+          transform: "translate(-50%, -50%)",
+        }}
+      >
+        <motion.div
+          ref={ringRef}
+          className={cn(
+            "w-full h-full absolute",
+            ringClassName
+          )}
+          style={{
+            transformStyle: "preserve-3d",
+            rotateY: rotationY,
+            cursor: draggable ? "grab" : "default",
+          }}
+        >
+          <AnimatePresence>
+            {showImages && images.map((imageUrl, index) => (
+              <motion.div
+                key={index}
+                className={cn(
+                  "w-full h-full absolute",
+                  imageClassName
+                )}
+                style={{
+                  transformStyle: "preserve-3d",
+                  backgroundImage: `url(${imageUrl})`,
+                  backgroundSize: "cover",
+                  backgroundRepeat: "no-repeat",
+                  backfaceVisibility: "hidden",
+                  rotateY: index * -angle,
+                  z: -imageDistance * currentScale,
+                  transformOrigin: `50% 50% ${imageDistance * currentScale}px`,
+                  backgroundPosition: getBgPos(index, currentRotationY.current, currentScale),
+                }}
+                initial="hidden"
+                animate="visible"
+                exit="hidden"
+                variants={imageVariants} // Use the simplified variants object
+                custom={index} // Pass the index as a custom prop
+                transition={{
+                  delay: index * staggerDelay, // Use index directly in transition
+                  duration: animationDuration,
+                  ease: easeOut, // Apply ease for entrance animation
+                }}
+                whileHover={{ opacity: 1, transition: { duration: 0.15 } }}
+                onHoverStart={() => {
+                  // Prevent hover effects while dragging
+                  if (isDragging.current) return;
+                  if (ringRef.current) {
+                    Array.from(ringRef.current.children).forEach((imgEl, i) => {
+                      if (i !== index) {
+                        (imgEl as HTMLElement).style.opacity = `${hoverOpacity}`;
+                      }
+                    });
+                  }
+                }}
+                onHoverEnd={() => {
+                  // Prevent hover effects while dragging
+                  if (isDragging.current) return;
+                  if (ringRef.current) {
+                    Array.from(ringRef.current.children).forEach((imgEl) => {
+                      (imgEl as HTMLElement).style.opacity = `1`;
+                    });
+                  }
+                }}
+              />
+            ))}
+          </AnimatePresence>
+        </motion.div>
+      </div>
+    </div>
+  );
+}
+
+export default Draggable3DImageRing;
+
+
+// components/Carousel3D.tsx
+"use client";
+
+import React, {
+  useRef,
+  useEffect,
+  useState,
+  TouchEvent,
+  ReactNode,
+} from "react";
+import { ChevronLeft, ChevronRight, ArrowRight } from "lucide-react";
+import { Card, CardContent } from "@/app/component2/ui/card";
+import { useIsMobile } from "../hooks/use-mobile";
+import Link from "next/link";
+
+export interface Carousel3DItem {
+  id: number;
+  title: string;
+  brand: string;
+  description: string;
+  tags: string[];
+  imageUrl: string;
+  link: string;
+}
+
+interface Carousel3DProps {
+  items: Carousel3DItem[];
+  autoRotate?: boolean;
+  rotateInterval?: number;
+  cardHeight?: number;
+  title?: string;
+  subtitle?: string;
+  tagline?: string;
+  isMobileSwipe?: boolean;
+}
+
+const Carousel3D = ({
+  items,
+  autoRotate = true,
+  rotateInterval = 4000,
+  cardHeight = 500,
+  title = "From Textile to Intelligence",
+  subtitle = "Customer Cases",
+  tagline = "Explore how our textile sensor technology is revolutionizing multiple industries with intelligent fabric solutions tailored to specific needs.",
+  isMobileSwipe = true,
+}: Carousel3DProps) => {
+  const [active, setActive] = useState(0);
+  const carouselRef = useRef<HTMLDivElement>(null);
+  const [isInView, setIsInView] = useState(false);
+  const [isHovering, setIsHovering] = useState(false);
+  const [touchStart, setTouchStart] = useState<number | null>(null);
+  const [touchEnd, setTouchEnd] = useState<number | null>(null);
+  const isMobile = useIsMobile();
+  const minSwipeDistance = 50;
+
+  useEffect(() => {
+    if (autoRotate && isInView && !isHovering) {
+      const interval = setInterval(() => {
+        setActive((prev) => (prev + 1) % items.length);
+      }, rotateInterval);
+      return () => clearInterval(interval);
+    }
+  }, [isInView, isHovering, autoRotate, rotateInterval, items.length]);
+
+  useEffect(() => {
+    const observer = new IntersectionObserver(
+      ([entry]) => setIsInView(entry.isIntersecting),
+      { threshold: 0.2 }
+    );
+    return () => observer.disconnect();
+  }, []);
+
+  const onTouchStart = (e: TouchEvent) => {
+    setTouchStart(e.targetTouches[0].clientX);
+    setTouchEnd(null);
+  };
+
+  const onTouchMove = (e: TouchEvent) => {
+    setTouchEnd(e.targetTouches[0].clientX);
+  };
+
+  const onTouchEnd = () => {
+    if (!touchStart || !touchEnd) return;
+    const distance = touchStart - touchEnd;
+    if (distance > minSwipeDistance) {
+      setActive((prev) => (prev + 1) % items.length);
+    } else if (distance < -minSwipeDistance) {
+      setActive((prev) => (prev - 1 + items.length) % items.length);
+    }
+  };
+
+  const getCardAnimationClass = (index: number) => {
+    if (index === active) return "scale-100 opacity-100 z-20";
+    if (index === (active + 1) % items.length)
+      return "translate-x-[40%] scale-95 opacity-60 z-10";
+    if (index === (active - 1 + items.length) % items.length)
+      return "translate-x-[-40%] scale-95 opacity-60 z-10";
+    return "scale-90 opacity-0";
+  };
+
+  return (
+    <section
+      id="carousel3d"
+      className="bg-transparent min-w-full mx-aut 
+    flex items-center justify-center"
+    >
+      <div
+        className="w-full px-4 sm:px-6 lg:px-8 
+      min-w-[350px] md:min-w-[1000px] max-w-7xl  "
+      >
+        <div
+          className="relative overflow-hidden h-[550px] "
+          onMouseEnter={() => setIsHovering(true)}
+          onMouseLeave={() => setIsHovering(false)}
+          onTouchStart={onTouchStart}
+          onTouchMove={onTouchMove}
+          onTouchEnd={onTouchEnd}
+          ref={carouselRef}
+        >
+          <div className="absolute top-0 left-0 w-full h-full flex items-center justify-center ">
+            {items.map((item, index) => (
+              <div
+                key={item.id}
+                className={`absolute top-0 w-full max-w-md transform transition-all duration-500 ${getCardAnimationClass(
+                  index
+                )}`}
+              >
+                <Card
+                  className={`overflow-hidden bg-background h-[${cardHeight}px] border shadow-sm 
+                hover:shadow-md flex flex-col`}
+                >
+                  <div
+                    className="relative bg-black p-6 flex items-center justify-center h-48 overflow-hidden"
+                    style={{
+                      backgroundImage: `url(${item.imageUrl})`,
+                      backgroundSize: "cover",
+                      backgroundPosition: "center",
+                    }}
+                  >
+                    <div className="absolute inset-0 bg-black/50" />
+                    <div className="relative z-10 text-center text-white">
+                      <h3 className="text-2xl font-bold mb-2">
+                        {item.brand.toUpperCase()}
+                      </h3>
+                      <div className="w-12 h-1 bg-white mx-auto mb-2" />
+                      <p className="text-sm ">{item.title}</p>
+                    </div>
+                  </div>
+
+                  <CardContent className="p-6 flex flex-col flex-grow">
+                    <h3 className="text-xl font-bold mb-1 text-foreground">
+                      {item.title}
+                    </h3>
+                    <p className="text-gray-500 text-sm font-medium mb-2">
+                      {item.brand}
+                    </p>
+                    <p className="text-gray-600 text-sm flex-grow">
+                      {item.description}
+                    </p>
+
+                    <div className="mt-4">
+                      <div className="flex flex-wrap gap-2 mb-4">
+                        {item.tags.map((tag, idx) => (
+                          <span
+                            key={idx}
+                            className="px-2 py-1 bg-gray-50 text-gray-600 rounded-full text-xs animate-pulse-slow"
+                          >
+                            {tag}
+                          </span>
+                        ))}
+                      </div>
+
+                      <Link
+                        href={item.link}
+                        className="text-gray-500 flex items-center hover:underline relative group"
+                        onClick={() => {
+                          if (item.link.startsWith("/")) {
+                            window.scrollTo(0, 0);
+                          }
+                        }}
+                      >
+                        <span className="relative z-10">Learn more</span>
+                        <ArrowRight className="ml-2 w-4 h-4 relative z-10 transition-transform group-hover:translate-x-1" />
+                        <span className="absolute left-0 bottom-0 w-0 h-0.5 bg-gray-500 transition-all duration-300 group-hover:w-full"></span>
+                      </Link>
+                    </div>
+                  </CardContent>
+                </Card>
+              </div>
+            ))}
+          </div>
+
+          {!isMobile && (
+            <>
+              <button
+                className="absolute left-4 top-1/2 -translate-y-1/2 w-10 h-10 bg-white/80 rounded-full flex items-center justify-center text-gray-500 hover:bg-white z-30 shadow-md transition-all hover:scale-110"
+                onClick={() =>
+                  setActive((prev) => (prev - 1 + items.length) % items.length)
+                }
+                aria-label="Previous"
+              >
+                <ChevronLeft className="w-5 h-5" />
+              </button>
+              <button
+                className="absolute right-4 top-1/2 -translate-y-1/2 w-10 h-10 bg-white/80 rounded-full flex items-center justify-center text-gray-500 hover:bg-white z-30 shadow-md transition-all hover:scale-110"
+                onClick={() => setActive((prev) => (prev + 1) % items.length)}
+                aria-label="Next"
+              >
+                <ChevronRight className="w-5 h-5" />
+              </button>
+            </>
+          )}
+
+          <div className="absolute bottom-6 left-0 right-0 flex justify-center items-center space-x-3 z-30">
+            {items.map((_, idx) => (
+              <button
+                key={idx}
+                className={`w-2 h-2 rounded-full transition-all duration-300 ${
+                  active === idx
+                    ? "bg-gray-500 w-5"
+                    : "bg-gray-200 hover:bg-gray-300"
+                }`}
+                onClick={() => setActive(idx)}
+                aria-label={`Go to item ${idx + 1}`}
+              />
+            ))}
+          </div>
+        </div>
+      </div>
+    </section>
+  );
+};
+
+export default Carousel3D;
+
+
+
+import React, {
+  useEffect,
+  useRef,
+  useState,
+  useLayoutEffect,
+  forwardRef,
+} from "react";
+import { gsap } from "gsap";
+import { ScrollTrigger } from "gsap/ScrollTrigger";
+import { motion } from "framer-motion";
+import {
+  LucideIcon,
+  Send,
+  Globe,
+  Shield,
+  CreditCard,
+  Zap,
+  Lock,
+  Smartphone,
+  TrendingUp,
+} from "lucide-react";
+
+// Assuming these are external, import them
+import { cn } from "../lib/utils";
+// import RippleLoader from "./ripple-loader";
+// import waves1blur from "../../assets/waves1blur.gif";
+
+gsap.registerPlugin(ScrollTrigger);
+
+// --- Component Props and Types ---
+// Define a type for a single feature object
+export interface FeatureItem {
+  icon: LucideIcon;
+  title: string;
+  description: string;
+  image: string;
+}
+
+// Define the component's props interface
+export interface ScrollCarouselProps {
+  features: FeatureItem[];
+  className?: string; // To allow external classes
+  maxScrollHeight?: number; // New optional prop for max scroll height
+}
+
+// --- Custom Hook for Animations ---
+const useFeatureAnimations = (
+  containerRef: React.RefObject<HTMLDivElement>,
+  scrollContainerRef: React.RefObject<HTMLDivElement>,
+  scrollContainerRef2: React.RefObject<HTMLDivElement>,
+  progressBarRef: React.RefObject<HTMLDivElement>,
+  cardRefs: React.MutableRefObject<HTMLDivElement[]>,
+  cardRefs2: React.MutableRefObject<HTMLDivElement[]>,
+  isDesktop: boolean,
+  maxScrollHeight?: number
+) => {
+  useLayoutEffect(() => {
+    let ctx = gsap.context(() => {
+      // Desktop horizontal scroll logic
+      if (isDesktop) {
+        const scrollWidth1 = scrollContainerRef.current?.scrollWidth || 0;
+        const scrollWidth2 = scrollContainerRef2.current?.scrollWidth || 0;
+        const containerWidth = containerRef.current?.offsetWidth || 0;
+        const cardWidth = cardRefs.current[0]?.offsetWidth || 0;
+        const viewportOffset = (containerWidth - cardWidth) / 2;
+
+        const finalOffset1 = scrollWidth1 - containerWidth + viewportOffset;
+        const finalOffset2 = scrollWidth2 - containerWidth + viewportOffset;
+
+        // Use the provided maxScrollHeight or the calculated offset as the scroll distance
+        const scrollDistance = maxScrollHeight || finalOffset1;
+
+        gsap.set(scrollContainerRef2.current, {
+          x: -finalOffset2 + viewportOffset * 2,
+        });
+
+        gsap
+          .timeline({
+            scrollTrigger: {
+              trigger: containerRef.current,
+              start: "top top",
+              end: () => `+=${scrollDistance}`,
+              scrub: 1,
+              pin: true,
+            },
+          })
+          .fromTo(
+            scrollContainerRef.current,
+            { x: viewportOffset },
+            { x: -finalOffset1 + viewportOffset, ease: "none" }
+          );
+
+        gsap
+          .timeline({
+            scrollTrigger: {
+              trigger: containerRef.current,
+              start: "top top",
+              end: () => `+=${scrollDistance}`,
+              scrub: 1,
+            },
+          })
+          .to(scrollContainerRef2.current, { x: viewportOffset, ease: "none" });
+
+        gsap.to(progressBarRef.current, {
+          width: "100%",
+          ease: "none",
+          scrollTrigger: {
+            trigger: containerRef.current,
+            start: "top top",
+            end: () => `+=${scrollDistance}`,
+            scrub: true,
+          },
+        });
+      } else {
+        // Mobile vertical scroll logic
+        const allCards = [...cardRefs.current, ...cardRefs2.current];
+        allCards.forEach((card, index) => {
+          if (card) {
+            gsap.fromTo(
+              card,
+              {
+                opacity: 0,
+                x: index % 2 === 0 ? -200 : 200,
+              },
+              {
+                opacity: 1,
+                x: 0,
+                duration: 1,
+                ease: "power2.out",
+                scrollTrigger: {
+                  trigger: card,
+                  start: "top 0%",
+                  toggleActions: "play none none none",
+                  once: true,
+                },
+              }
+            );
+          }
+        });
+      }
+    }, containerRef);
+
+    return () => {
+      ctx.revert();
+    };
+  }, [isDesktop, maxScrollHeight]);
+};
+
+// --- Component Definition ---
+export const ScrollCarousel = forwardRef<HTMLDivElement, ScrollCarouselProps>(
+  ({ features, className, maxScrollHeight }, ref) => {
+    const containerRef = useRef<HTMLDivElement>(null);
+    const scrollContainerRef = useRef<HTMLDivElement>(null);
+    const scrollContainerRef2 = useRef<HTMLDivElement>(null);
+    const progressBarRef = useRef<HTMLDivElement>(null);
+    const cardRefs = useRef<HTMLDivElement[]>([]);
+    const cardRefs2 = useRef<HTMLDivElement[]>([]);
+    const [isDesktop, setIsDesktop] = useState(false);
+
+    // Dynamic sorting for the second row of cards
+    const features2 = [...features].sort(() => Math.random() - 0.5);
+
+    useEffect(() => {
+      const checkDesktop = () => {
+        setIsDesktop(window.matchMedia("(min-width: 768px)").matches);
+      };
+      checkDesktop();
+      window.addEventListener("resize", checkDesktop);
+      return () => window.removeEventListener("resize", checkDesktop);
+    }, []);
+
+    useFeatureAnimations(
+      containerRef,
+      scrollContainerRef,
+      scrollContainerRef2,
+      progressBarRef,
+      cardRefs,
+      cardRefs2,
+      isDesktop,
+      maxScrollHeight
+    );
+
+    const renderFeatureCards = (
+      featureSet: FeatureItem[],
+      refs: React.MutableRefObject<HTMLDivElement[]>
+    ) =>
+      featureSet.map((feature, index) => (
+        <div
+          key={index}
+          ref={(el: HTMLDivElement | null) => {
+            if (el) refs.current[index] = el;
+          }}
+          className="feature-card flex-shrink-0 w-full md:w-full  h-full
+          z-10 gap-4  group relative transition-all duration-300 ease-in-out"
+        >
+          <div
+            className={cn(
+              `relative h-full p-4 lg:p-8 rounded-3xl backdrop-blur-sm 
+              flex items-center justify-center z-10 
+              transition-all duration-300 my-4`,
+              `backdrop-blur-lg border text-black dark:text-white`,
+              "group-hover:scale-105 centered:scale-105"
+            )}
+          >
+            <img
+              src={
+                feature.image ||
+                "https://images.pexels.com/photos/9934462/pexels-photo-9934462.jpeg"
+              }
+              alt=""
+              className="absolute inset-0 w-full h-full 
+              object-cover z-[-1] rounded-3xl "
+            />
+            {/* <RippleLoader className="!absolute z-[-1]" icon={feature.icon} /> */}
+            <div className="absolute bottom-4 z-10 w-full px-4">
+              <div
+                className={cn(
+                  `flex flex-col justify-end h-full opacity-100 translate-y-4 transition-all duration-300 ease-out text-center`
+                )}
+              >
+                <h3 className="text-2xl mb-0 font-bold text-white transition-all duration-300">
+                  {feature.title}
+                </h3>
+                <p className="text-white text-xs mb-4 opacity-60">
+                  {feature.description}
+                </p>
+                {/* <img
+                  src={feature.image}
+                  alt=""
+                  className="absolute inset-0 w-full h-full object-cover z-[-1] rounded-3xl blur-[5px]"
+                /> */}
+              </div>
+            </div>
+            <div className="pointer-events-none absolute inset-0 transition-all duration-300 group-hover:bg-black/5 dark:group-hover:bg-white/5 centered:bg-black/5 dark:centered:bg-white/5 rounded-2xl group-hover:blur-md" />
+          </div>
+        </div>
+      ));
+
+    return (
+      <section
+        className={cn(
+          "bg-transparent text-foreground relative overflow-hidden",
+          className
+        )}
+        ref={ref}
+      >
+        <div
+          ref={containerRef}
+          className="relative overflow-hidden md:h-screen md:py-20 
+          flex flex-col gap-0 z-10 
+          lg:[mask-image:_linear-gradient(to_right,transparent_0,_black_5%,_black_95%,transparent_100%)]"
+        >
+          <div
+            ref={scrollContainerRef}
+            className="flex flex-col md:flex-row gap-8 
+            items-center h-full px-6 md:px-0"
+          >
+            {renderFeatureCards(features, cardRefs)}
+          </div>
+
+          <div
+            ref={scrollContainerRef2}
+            className="flex flex-col md:flex-row gap-8 items-center h-full px-6 md:px-0 hidden xl:flex"
+          >
+            {renderFeatureCards(features2, cardRefs2)}
+          </div>
+
+          {isDesktop && (
+            <div className="absolute bottom-10 left-1/2 -translate-x-1/2 w-64 h-2 bg-black/30 dark:bg-white/30 z-50 overflow-hidden rounded-full">
+              <div
+                ref={progressBarRef}
+                className="h-full rounded-full relative overflow-hidden transition-all duration-100"
+                style={{ width: "0%" }}
+              >
+                <div className="absolute inset-0 animated-water" />
+              </div>
+            </div>
+          )}
+        </div>
+        <style jsx>{`
+          .animated-water {
+            background: repeating-linear-gradient(
+              -45deg,
+              rgba(0, 0, 0, 0.7) 0%,
+              rgba(0, 0, 0, 0.5) 25%,
+              rgba(0, 0, 0, 0.7) 50%
+            );
+            background-size: 40px 40px;
+            animation: waveMove 2s linear infinite;
+          }
+          :global(.dark) .animated-water {
+            background: repeating-linear-gradient(
+              -45deg,
+              rgba(255, 255, 255, 0.9) 0%,
+              rgba(255, 255, 255, 0.6) 25%,
+              rgba(255, 255, 255, 0.9) 50%
+            );
+          }
+          @keyframes waveMove {
+            from {
+              background-position: 0 0;
+            }
+            to {
+              background-position: 40px 40px;
+            }
+          }
+        `}</style>
+      </section>
+    );
+  }
+);
+
+ScrollCarousel.displayName = "ScrollCarousel";
+
+export default ScrollCarousel;
+
+
+
+"use client";
+
+import React, { useEffect, useState } from "react";
+import { cn } from "../lib/utils";
+
+// Grid Background Component
+export interface GridBackgroundProps extends React.HTMLProps<HTMLDivElement> {
+  gridSize?: number;
+  gridColor?: string;
+  darkGridColor?: string;
+  showFade?: boolean;
+  fadeIntensity?: number;
+  children?: React.ReactNode;
+}
+
+export const GridBackground = ({
+  className,
+  children,
+  gridSize = 20,
+  gridColor = "#e4e4e7",
+  darkGridColor = "#262626",
+  showFade = true,
+  fadeIntensity = 20,
+  ...props
+}: GridBackgroundProps) => {
+  const [currentGridColor, setCurrentGridColor] = useState(gridColor);
+
+  useEffect(() => {
+    const prefersDarkMode = window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches;
+    const isDarkModeActive = document.documentElement.classList.contains('dark') || prefersDarkMode;
+    setCurrentGridColor(isDarkModeActive ? darkGridColor : gridColor);
+
+    const observer = new MutationObserver(function (mutations) {
+      mutations.forEach(function (mutation) {
+        if (mutation.attributeName === 'class') {
+          const updatedIsDarkModeActive = document.documentElement.classList.contains('dark');
+          setCurrentGridColor(updatedIsDarkModeActive ? darkGridColor : gridColor);
+        }
+      });
+    });
+
+    observer.observe(document.documentElement, { attributes: true });
+
+    return function () {
+      return observer.disconnect();
+    };
+  }, [gridColor, darkGridColor]);
+
+  return (
+    <div
+      className={cn(
+        "absolute flex h-[50rem] w-full items-center justify-center bg-white dark:bg-black",
+        className
+      )}
+      {...props}
+    >
+      <div
+        className="absolute inset-0"
+        style={{
+          backgroundSize: gridSize + "px " + gridSize + "px", // String concatenation
+          backgroundImage:
+            "linear-gradient(to right, " + currentGridColor + " 1px, transparent 1px), " +
+            "linear-gradient(to bottom, " + currentGridColor + " 1px, transparent 1px)", // String concatenation
+        }}
+      />
+
+      {showFade && (
+        <div
+          className="pointer-events-none absolute inset-0 flex items-center justify-center bg-white dark:bg-black"
+          style={{
+            maskImage:
+              "radial-gradient(ellipse at center, transparent " + fadeIntensity + "%, black)", // String concatenation
+            WebkitMaskImage:
+              "radial-gradient(ellipse at center, transparent " + fadeIntensity + "%, black)", // String concatenation
+          }}
+        />
+      )}
+
+      <div className="relative z-20">
+        {children}
+      </div>
+    </div>
+  );
+};
+
+// Dot Background Component
+export interface DotBackgroundProps extends React.HTMLProps<HTMLDivElement> {
+  dotSize?: number;
+  dotColor?: string;
+  darkDotColor?: string;
+  spacing?: number;
+  showFade?: boolean;
+  fadeIntensity?: number;
+  children?: React.ReactNode;
+}
+
+export const DotBackground = ({
+  className,
+  children,
+  dotSize = 1,
+  dotColor = "#000",
+  darkDotColor = "#fff",
+  spacing = 20,
+  showFade = true,
+  fadeIntensity = 20,
+  ...props
+}: DotBackgroundProps) => {
+  const [currentDotColor, setCurrentDotColor] = useState(dotColor);
+
+  useEffect(() => {
+    const prefersDarkMode = window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches;
+    const isDarkModeActive = document.documentElement.classList.contains('dark') || prefersDarkMode;
+    setCurrentDotColor(isDarkModeActive ? darkDotColor : dotColor);
+
+    const observer = new MutationObserver(function (mutations) {
+      mutations.forEach(function (mutation) {
+        if (mutation.attributeName === 'class') {
+          const updatedIsDarkModeActive = document.documentElement.classList.contains('dark');
+          setCurrentDotColor(updatedIsDarkModeActive ? darkDotColor : dotColor);
+        }
+      });
+    });
+
+    observer.observe(document.documentElement, { attributes: true });
+
+    return function () {
+      return observer.disconnect();
+    };
+  }, [dotColor, darkDotColor]);
+
+  return (
+    <div
+      className={cn(
+        "absolute flex h-[50rem] w-full items-center justify-center bg-white dark:bg-black",
+        className
+      )}
+      {...props}
+    >
+      <div
+        className="absolute inset-0"
+        style={{
+          backgroundSize: spacing + "px " + spacing + "px", // String concatenation
+          backgroundImage:
+            "radial-gradient(" + currentDotColor + " " + dotSize + "px, transparent " + dotSize + "px)", // String concatenation
+        }}
+      />
+
+      {showFade && (
+        <div
+          className="pointer-events-none absolute inset-0 flex items-center justify-center bg-white dark:bg-black"
+          style={{
+            maskImage:
+              "radial-gradient(ellipse at center, transparent " + fadeIntensity + "%, black)", // String concatenation
+            WebkitMaskImage:
+              "radial-gradient(ellipse at center, transparent " + fadeIntensity + "%, black)", // String concatenation
+          }}
+        />
+      )}
+
+      <div className="relative z-20">
+        {children}
+      </div>
+    </div>
+  );
+};
+
+export default { GridBackground, DotBackground };
+
+
+
+
+"use client";
+
+import React, { useState, useCallback, useEffect, useRef } from 'react';
+import { Flipper, Flipped } from 'react-flip-toolkit';
+import { X } from 'lucide-react';
+import { cn } from '../lib/utils';
+
+export interface NotificationUser {
+  avatarUrl?: string;
+  name: string;
+  initials?: string;
+  color?: string;
+}
+
+export interface NotificationItem {
+  id: string;
+  user: NotificationUser;
+  message: string;
+  timestamp?: string;
+  priority?: 'low' | 'medium' | 'high';
+  type?: 'info' | 'success' | 'warning' | 'error';
+  fadingOut?: boolean;
+}
+
+export interface AnimatedNotificationProps {
+  /** Maximum number of notifications to show at once */
+  maxNotifications?: number;
+  /** Interval between auto-generated notifications (in ms) */
+  autoInterval?: number;
+  /** Enable auto-generation of notifications */
+  autoGenerate?: boolean;
+  /** Custom notification data */
+  notifications?: NotificationItem[];
+  /** Custom messages for auto-generation */
+  customMessages?: string[];
+  /** Animation duration for fade transitions */
+  animationDuration?: number;
+  /** Position of the notification center */
+  position?: 'top-left' | 'top-right' | 'bottom-left' | 'bottom-right' | 'center';
+  /** Width of notification cards */
+  width?: number;
+  /** Enable/disable user avatars */
+  showAvatars?: boolean;
+  /** Enable/disable timestamps */
+  showTimestamps?: boolean;
+  /** Custom CSS class */
+  className?: string;
+  /** Callback when notification is clicked */
+  onNotificationClick?: (notification: NotificationItem) => void;
+  /** Callback when notification is dismissed */
+  onNotificationDismiss?: (notification: NotificationItem) => void;
+  /** Enable manual dismiss */
+  allowDismiss?: boolean;
+  /** Auto dismiss timeout (0 to disable) */
+  autoDismissTimeout?: number;
+  /** Custom API endpoint for fetching users */
+  userApiEndpoint?: string;
+  /** Theme variant */
+  variant?: 'default' | 'minimal' | 'glass' | 'bordered';
+}
+
+const defaultMessages = [
+  "Just completed a task! ✅",
+  "New feature deployed 🚀",
+  "Check out our latest update 📱",
+  "Server responded with 200 OK ✨",
+  "Background job finished 🔄",
+  "Data synced successfully! 💾",
+  "User logged in successfully 👋",
+  "Payment processed 💳",
+  "Email sent successfully 📧",
+  "Backup completed 🛡️"
+];
+
+const Avatar: React.FC<{
+  user: NotificationUser;
+  showAvatar: boolean;
+}> = ({ user, showAvatar }) => {
+  if (!showAvatar) return null;
+
+  return (
+    <div
+      className="flex-shrink-0 w-10 h-10 rounded-full 
+      overflow-hidden bg-gradient-to-br from-primary/20 to-primary/40 
+      flex items-center justify-center transition-all duration-300 
+      hover:scale-110 backdrop-blur-sm"
+      style={{ backgroundColor: user.color }}
+    >
+      {user.avatarUrl ? (
+        <img
+          src={user.avatarUrl}
+          alt={`${user.name} avatar`}
+          className="w-full h-full object-cover"
+          loading="lazy"
+        />
+      ) : (
+        <span className="text-xs font-bold text-white drop-shadow-sm">
+          {user.initials || user.name.split(' ').map(n => n[0]).join('').slice(0, 2).toUpperCase()}
+        </span>
+      )}
+    </div>
+  );
+};
+
+const Notification: React.FC<{
+  notification: NotificationItem;
+  showAvatars: boolean;
+  showTimestamps: boolean;
+  variant: string;
+  onDismiss?: () => void;
+  onClick?: () => void;
+  allowDismiss: boolean;
+}> = ({
+  notification,
+  showAvatars,
+  showTimestamps,
+  variant,
+  onDismiss,
+  onClick,
+  allowDismiss
+}) => {
+  const getVariantStyles = () => {
+    switch (variant) {
+      case 'minimal':
+        return "bg-background/95 border border-border/50 backdrop-blur-xl";
+      case 'glass':
+        return "bg-background/30 backdrop-blur-2xl border border-white/20 dark:border-gray-800/20 shadow-2xl";
+      case 'bordered':
+        return "bg-card/95 border-2 border-primary/30 backdrop-blur-lg shadow-xl";
+      default:
+        return "bg-background/30 backdrop-blur-2xl border border-white/20 shadow-2xl";
+    }
+  };
+
+const getPriorityStyles = () => {
+  switch (notification.priority) { 
+    case 'high':
+      return 'border-l-4 border-l-red-500 shadow-red-500/20 dark:border-l-red-500 dark:shadow-red-500/20';
+    case 'medium':
+      return 'border-l-4 border-l-yellow-500 shadow-yellow-500/20 dark:border-l-yellow-500 dark:shadow-yellow-500/20';
+    case 'low':
+      return 'border-l-4 border-l-blue-500 shadow-blue-500/20 dark:border-l-blue-500 dark:shadow-blue-500/20';
+    default:
+      return 'border-l-4 border-l-primary/50 shadow-primary/20 dark:border-l-primary/50 dark:shadow-primary/20';
+  }
+};
+
+
+  return (
+    <div
+      className={cn(
+        "group relative transition-all duration-500 ease-out transform hover:scale-[1.02] hover:-translate-y-1",
+        "rounded-xl p-4 flex items-start gap-3 w-80 max-w-80 cursor-pointer",
+        getVariantStyles(),
+        getPriorityStyles(),
+        notification.fadingOut && "animate-pulse"
+      )}
+      onClick={onClick}
+    >
+      <div className="absolute inset-0 bg-gradient-to-r from-transparent via-white/5 to-transparent opacity-0 group-hover:opacity-100 transition-opacity duration-300 rounded-xl pointer-events-none" />
+
+      <Avatar user={notification.user} showAvatar={showAvatars} />
+
+      <div className="flex-1 min-w-0 space-y-1">
+        <div className="flex items-center justify-between">
+          <h3 className="font-semibold text-sm text-foreground/90 truncate">
+            {notification.user.name}
+          </h3>
+          {showTimestamps && notification.timestamp && (
+            <span className="text-xs text-muted-foreground/70 font-mono">
+              {notification.timestamp}
+            </span>
+          )}
+        </div>
+        <p className="text-sm text-muted-foreground/80 line-clamp-2 leading-relaxed">
+          {notification.message}
+        </p>
+      </div>
+
+      {allowDismiss && (
+        <button
+          onClick={(e) => {
+            e.stopPropagation();
+            onDismiss?.();
+          }}
+          className="flex-shrink-0 w-5 h-5 text-muted-foreground/50 hover:text-muted-foreground transition-all duration-200 hover:scale-110 opacity-0 group-hover:opacity-100"
+        >
+          <X className="w-4 h-4" />
+        </button>
+      )}
+    </div>
+  );
+};
+
+async function fetchRandomUser(apiEndpoint?: string): Promise<NotificationUser> {
+  try {
+    const endpoint = apiEndpoint || "https://randomuser.me/api/";
+    const res = await fetch(endpoint);
+    const data = await res.json();
+    const user = data.results[0];
+
+    return {
+      avatarUrl: user.picture?.large,
+      name: `${user.name.first} ${user.name.last}`,
+      color: `hsl(${Math.floor(Math.random() * 360)}, 70%, 80%)`
+    };
+  } catch (error) {
+    const names = ['John Doe', 'Jane Smith', 'Alex Johnson', 'Sarah Wilson', 'Mike Brown'];
+    const randomName = names[Math.floor(Math.random() * names.length)];
+
+    return {
+      name: randomName,
+      color: `hsl(${Math.floor(Math.random() * 360)}, 70%, 80%)`
+    };
+  }
+}
+
+function getRandomMessage(customMessages?: string[]): string {
+  const messages = customMessages || defaultMessages;
+  return messages[Math.floor(Math.random() * messages.length)];
+}
+
+async function generateNotification(
+  customMessages?: string[],
+  userApiEndpoint?: string
+): Promise<NotificationItem> {
+  const user = await fetchRandomUser(userApiEndpoint);
+  return {
+    id: crypto.randomUUID(),
+    user,
+    message: getRandomMessage(customMessages),
+    timestamp: new Date().toLocaleTimeString(),
+    priority: ['low', 'medium', 'high'][Math.floor(Math.random() * 3)] as 'low' | 'medium' | 'high'
+  };
+}
+
+const AnimatedNotification: React.FC<AnimatedNotificationProps> = ({
+  maxNotifications = 3,
+  autoInterval = 1500,
+  autoGenerate = true,
+  notifications = [],
+  customMessages,
+  animationDuration = 800,
+  position = 'center',
+  width = 320,
+  showAvatars = true,
+  showTimestamps = true,
+  className,
+  onNotificationClick,
+  onNotificationDismiss,
+  allowDismiss = true,
+  autoDismissTimeout = 0,
+  userApiEndpoint,
+  variant = 'glass'
+}) => {
+  const [notes, setNotes] = useState<NotificationItem[]>(notifications);
+  const timeoutRef = useRef<NodeJS.Timeout | null>(null);
+  const dismissTimeouts = useRef<Map<string, NodeJS.Timeout>>(new Map());
+
+  const dismissNotification = useCallback((id: string) => {
+    setNotes(prev => {
+      const noteToDismiss = prev.find(note => note.id === id);
+      if (!noteToDismiss || noteToDismiss.fadingOut) {
+        return prev;
+      }
+
+      const updatedNotes = prev.map(note =>
+        note.id === id ? { ...note, fadingOut: true } : note
+      );
+
+      const timeout = dismissTimeouts.current.get(id);
+      if (timeout) {
+        clearTimeout(timeout);
+        dismissTimeouts.current.delete(id);
+      }
+
+      setTimeout(() => {
+        setNotes(current => current.filter(note => note.id !== id));
+      }, animationDuration);
+
+      return updatedNotes;
+    });
+  }, [animationDuration]);
+
+  const addNote = useCallback(async () => {
+    if (!autoGenerate) return;
+
+    const newNote = await generateNotification(customMessages, userApiEndpoint);
+
+    setNotes((prev) => {
+      let currentNotes = [...prev];
+
+      if (currentNotes.length >= maxNotifications) {
+        const oldestNote = currentNotes[0];
+
+        if (oldestNote && !oldestNote.fadingOut) {
+          currentNotes = currentNotes.map((note, i) =>
+            i === 0 ? { ...note, fadingOut: true } : note
+          );
+
+          setTimeout(() => {
+            setNotes(current => current.filter(note => note.id !== oldestNote.id));
+          }, animationDuration);
+        }
+      }
+
+      return [...currentNotes, newNote];
+    });
+
+    if (autoDismissTimeout > 0) {
+      const timeout = setTimeout(() => {
+        dismissNotification(newNote.id);
+      }, autoDismissTimeout);
+      dismissTimeouts.current.set(newNote.id, timeout);
+    }
+
+    if (autoGenerate) {
+      timeoutRef.current = setTimeout(addNote, autoInterval);
+    }
+  }, [
+    autoGenerate,
+    customMessages,
+    userApiEndpoint,
+    maxNotifications,
+    autoInterval,
+    autoDismissTimeout,
+    animationDuration,
+    dismissNotification
+  ]);
+
+  useEffect(() => {
+    if (autoGenerate) {
+      timeoutRef.current = setTimeout(addNote, 1000);
+    }
+
+    return () => {
+      if (timeoutRef.current) clearTimeout(timeoutRef.current);
+      dismissTimeouts.current.forEach(timeout => clearTimeout(timeout));
+      dismissTimeouts.current.clear();
+    };
+  }, [addNote, autoGenerate]);
+
+  useEffect(() => {
+    if (notifications.length > 0 && JSON.stringify(notes) !== JSON.stringify(notifications)) {
+      setNotes(notifications);
+      dismissTimeouts.current.forEach(timeout => clearTimeout(timeout));
+      dismissTimeouts.current.clear();
+    }
+  }, [notifications, notes]);
+
+  const getPositionStyles = () => {
+    switch (position) {
+      case 'top-left':
+        return 'fixed top-6 left-6 z-50';
+      case 'top-right':
+        return 'fixed top-6 right-6 z-50';
+      case 'bottom-left':
+        return 'fixed bottom-6 left-6 z-50';
+      case 'bottom-right':
+        return 'fixed bottom-6 right-6 z-50';
+      default:
+        return 'flex items-center justify-center min-h-auto p-6';
+    }
+  };
+
+  return (
+    <>
+      <style dangerouslySetInnerHTML={{
+        __html: `
+          @keyframes notification-enter {
+            from {
+              opacity: 0;
+              transform: translateY(20px) scale(0.95);
+              filter: blur(4px);
+            }
+            to {
+              opacity: 1;
+              transform: translateY(0) scale(1);
+              filter: blur(0px);
+            }
+          }
+
+          @keyframes notification-exit {
+            from {
+              opacity: 1;
+              transform: translateY(0) scale(1);
+              filter: blur(0px);
+            }
+            to {
+              opacity: 0;
+              transform: translateY(-20px) scale(0.95);
+              filter: blur(4px);
+            }
+          }
+
+          .notification-enter {
+            animation: notification-enter var(--animation-duration) cubic-bezier(0.4, 0, 0.2, 1) forwards;
+          }
+
+          .notification-exit {
+            animation: notification-exit var(--animation-duration) cubic-bezier(0.4, 0, 0.2, 1) forwards;
+          }
+        `
+      }} />
+
+      <div className={cn(getPositionStyles(), className)}>
+        <Flipper flipKey={notes.map((note) => note.id).join("")}>
+          <div className="flex flex-col gap-4 items-center" style={{ width }}>
+            {notes.map((note) => (
+              <Flipped key={note.id} flipId={note.id}>
+                <div
+                  className={cn(
+                    "notification-item",
+                    note.fadingOut ? "notification-exit" : "notification-enter"
+                  )}
+                  style={{ '--animation-duration': `${animationDuration}ms` } as React.CSSProperties}
+                >
+                  <Notification
+                    notification={note}
+                    showAvatars={showAvatars}
+                    showTimestamps={showTimestamps}
+                    variant={variant}
+                    allowDismiss={allowDismiss}
+                    onClick={() => onNotificationClick?.(note)}
+                    onDismiss={() => {
+                      onNotificationDismiss?.(note);
+                      dismissNotification(note.id);
+                    }}
+                  />
+                </div>
+              </Flipped>
+            ))}
+          </div>
+        </Flipper>
+      </div>
+    </>
+  );
+};
+
+export default AnimatedNotification;
+
+
+"use client";
+import React, { useEffect, useRef } from "react";
+import createGlobe from "cobe";
+import { cn } from "../lib/utils"; // Assuming cn utility is available for Tailwind classes
+
+// Utility function to convert a hex color string to a normalized RGB array
+// Handles #RGB and #RRGGBB formats.
+const hexToRgbNormalized = (hex: string): [number, number, number] => {
+  let r = 0,
+    g = 0,
+    b = 0;
+
+  // Remove the # if present
+  const cleanHex = hex.startsWith("#") ? hex.slice(1) : hex;
+
+  if (cleanHex.length === 3) {
+    // Handle shorthand hex codes (e.g., #00F -> #0000FF)
+    r = parseInt(cleanHex[0] + cleanHex[0], 16);
+    g = parseInt(cleanHex[1] + cleanHex[1], 16);
+    b = parseInt(cleanHex[2] + cleanHex[2], 16);
+  } else if (cleanHex.length === 6) {
+    // Handle full hex codes (e.g., #RRGGBB)
+    r = parseInt(cleanHex.substring(0, 2), 16);
+    g = parseInt(cleanHex.substring(2, 4), 16);
+    b = parseInt(cleanHex.substring(4, 6), 16);
+  } else {
+    // Fallback for invalid hex (or if you want to throw an error)
+    console.warn(`Invalid hex color: ${hex}. Falling back to black.`);
+    return [0, 0, 0];
+  }
+
+  // Normalize to 0-1 range
+  return [r / 255, g / 255, b / 255];
+};
+
+interface GlobeProps {
+  className?: string;
+  theta?: number;
+  dark?: number;
+  scale?: number;
+  diffuse?: number;
+  mapSamples?: number;
+  mapBrightness?: number;
+  // Allow color props to be either a hex string or an RGB array
+  baseColor?: [number, number, number] | string;
+  markerColor?: [number, number, number] | string;
+  glowColor?: [number, number, number] | string;
+}
+
+const Globe: React.FC<GlobeProps> = ({
+  className,
+  theta = 0.25,
+  dark = 0,
+  scale = 1.1,
+  diffuse = 1.2,
+  mapSamples = 60000,
+  mapBrightness = 10,
+  baseColor = "#ffffff", // Removed default here, handled in useEffect
+  markerColor = "#ffffff", // Removed default here
+  glowColor = "#ffffff", // Removed default here
+  
+}) => {
+  const canvasRef = useRef<HTMLCanvasElement>(null);
+  const globeRef = useRef<any>(null); // To store the cobe globe instance
+
+  // Refs for interactive rotation and dragging state
+  const phiRef = useRef(0);
+  const thetaRef = useRef(theta); // Initialize thetaRef with prop theta
+  const isDragging = useRef(false);
+  const lastMouseX = useRef(0);
+  const lastMouseY = useRef(0);
+  const autoRotateSpeed = 0.003; // Define auto-rotation speed
+
+  useEffect(() => {
+    const canvas = canvasRef.current;
+    if (!canvas) return;
+
+    // Resolve color props to the [R, G, B] format required by cobe
+    const resolvedBaseColor: [number, number, number] =
+      typeof baseColor === "string"
+        ? hexToRgbNormalized(baseColor)
+        : baseColor || [0.4, 0.6509, 1]; // Default if not provided or invalid hex
+
+    const resolvedMarkerColor: [number, number, number] =
+      typeof markerColor === "string"
+        ? hexToRgbNormalized(markerColor)
+        : markerColor || [1, 0, 0]; // Default if not provided or invalid hex
+
+    const resolvedGlowColor: [number, number, number] =
+      typeof glowColor === "string"
+        ? hexToRgbNormalized(glowColor)
+        : glowColor || [0.2745, 0.5765, 0.898]; // Default if not provided or invalid hex
+
+    const initGlobe = () => {
+      // Destroy existing globe instance if it exists to prevent multiple instances
+      if (globeRef.current) {
+        globeRef.current.destroy();
+        globeRef.current = null;
+      }
+
+      const rect = canvas.getBoundingClientRect();
+      const size = Math.min(rect.width, rect.height);
+      const devicePixelRatio = window.devicePixelRatio || 1;
+      const internalWidth = size * devicePixelRatio;
+      const internalHeight = size * devicePixelRatio;
+
+      canvas.width = internalWidth;
+      canvas.height = internalHeight;
+
+      globeRef.current = createGlobe(canvas, {
+        devicePixelRatio: devicePixelRatio,
+        width: internalWidth,
+        height: internalHeight,
+        phi: phiRef.current,
+        theta: thetaRef.current, // Use thetaRef for initial and interactive theta
+        dark: dark,
+        scale: scale,
+        diffuse: diffuse,
+        mapSamples: mapSamples,
+        mapBrightness: mapBrightness,
+        baseColor: resolvedBaseColor, // Use converted/resolved colors
+        markerColor: resolvedMarkerColor, // Use converted/resolved colors
+        glowColor: resolvedGlowColor, // Use converted/resolved colors
+        opacity: 1,
+        offset: [0, 0],
+        markers: [
+
+        ],
+        onRender: (state: Record<string, any>) => {
+          if (!isDragging.current) {
+            // Only auto-rotate if not currently dragging
+            phiRef.current += autoRotateSpeed;
+          }
+          state.phi = phiRef.current;
+          state.theta = thetaRef.current; // Ensure cobe uses the updated thetaRef
+        },
+      });
+    };
+
+    // --- Mouse Interaction Handlers ---
+    const onMouseDown = (e: MouseEvent) => {
+      isDragging.current = true;
+      lastMouseX.current = e.clientX;
+      lastMouseY.current = e.clientY;
+      canvas.style.cursor = "grabbing"; // Change cursor to indicate dragging
+    };
+
+    const onMouseMove = (e: MouseEvent) => {
+      if (isDragging.current) {
+        const deltaX = e.clientX - lastMouseX.current;
+        const deltaY = e.clientY - lastMouseY.current;
+
+        // Adjust rotation sensitivity as needed
+        const rotationSpeed = 0.005;
+
+        // Update phi (horizontal rotation)
+        phiRef.current += deltaX * rotationSpeed;
+        // Update theta (vertical rotation), clamp to prevent flipping
+        // Clamped between -PI/2 and PI/2 to prevent globe from going upside down
+        thetaRef.current = Math.max(
+          -Math.PI / 2,
+          Math.min(Math.PI / 2, thetaRef.current - deltaY * rotationSpeed)
+        );
+
+        lastMouseX.current = e.clientX;
+        lastMouseY.current = e.clientY;
+      }
+    };
+
+    const onMouseUp = () => {
+      isDragging.current = false;
+      canvas.style.cursor = "grab"; // Change cursor back
+    };
+
+    const onMouseLeave = () => {
+      // If mouse leaves canvas while dragging, stop dragging
+      if (isDragging.current) {
+        isDragging.current = false;
+        canvas.style.cursor = "grab";
+      }
+    };
+    // --- End Mouse Interaction Handlers ---
+
+    initGlobe();
+
+    // Attach event listeners for mouse interaction
+    canvas.addEventListener("mousedown", onMouseDown);
+    canvas.addEventListener("mousemove", onMouseMove);
+    canvas.addEventListener("mouseup", onMouseUp);
+    canvas.addEventListener("mouseleave", onMouseLeave); // Important for when mouse leaves canvas during a drag
+
+    const handleResize = () => {
+      initGlobe();
+    };
+
+    window.addEventListener("resize", handleResize);
+
+    // Cleanup function: destroy the globe instance and remove event listeners when component unmounts
+    return () => {
+      window.removeEventListener("resize", handleResize);
+      // Remove mouse event listeners on cleanup
+      if (canvas) {
+        canvas.removeEventListener("mousedown", onMouseDown);
+        canvas.removeEventListener("mousemove", onMouseMove);
+        canvas.removeEventListener("mouseup", onMouseUp);
+        canvas.removeEventListener("mouseleave", onMouseLeave);
+      }
+      if (globeRef.current) {
+        globeRef.current.destroy();
+        globeRef.current = null;
+      }
+    };
+  }, [
+    theta,
+    dark,
+    scale,
+    diffuse,
+    mapSamples,
+    mapBrightness,
+    baseColor, // Include color props in dependency array so globe re-initializes if they change
+    markerColor,
+    glowColor,
+  ]);
+
+  return (
+    <div
+      className={cn(
+        "flex items-center justify-center z-[10] mx-auto",
+        className
+      )}
+      style={{
+        width: "auto",
+        height: "auto", // Container takes full viewport height
+        display: "flex", // Ensure flexbox properties are active for centering
+        alignItems: "center",
+        justifyContent: "center",
+        overflow: "hidden", // Prevent scrollbars if content overflows
+      }}
+    >
+      <canvas
+        ref={canvasRef}
+        style={{
+          width: "20rem", // Canvas takes full width of its parent (which is constrained)
+          height: "20rem", // Canvas takes full height of its parent (which is constrained)
+          maxWidth: "auto", // Limit max width to viewport height to ensure square aspect in landscape
+          maxHeight: "auto", // Limit max height to viewport width to ensure square aspect in portrait
+          aspectRatio: "1", // Force a 1:1 aspect ratio for the canvas element
+          display: "block", // Ensure canvas behaves as a block element
+          cursor: "grab", // Default cursor
+        }}
+      />
+    </div>
+  );
+};
+
+export default Globe;
