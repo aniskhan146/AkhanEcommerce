@@ -3,6 +3,7 @@ import { Link, useLocation } from "wouter";
 import { Button } from "@/components/ui/button";
 import { Search, User, Menu, X } from "lucide-react";
 import DynamicNavigation from "@/components/DynamicNavigation";
+import CategoryDropdown from "@/components/CategoryDropdown";
 import HamburgerMenuOverlay from "@/components/HamburgerMenuOverlay";
 import CartDrawer from "@/components/CartDrawer";
 import { cn } from "@/lib/utils";
@@ -27,7 +28,6 @@ export default function Layout({ children }: LayoutProps) {
   const navigationLinks = [
     { id: "home", label: "Home", href: "/" },
     { id: "products", label: "Products", href: "/products" },
-    { id: "categories", label: "Categories", href: "/products?category=all" },
     { id: "deals", label: "Deals", href: "/products?featured=true" },
   ];
 
@@ -58,9 +58,8 @@ export default function Layout({ children }: LayoutProps) {
 
   const activeLink = 
     location === "/" ? "home" :
+    location.startsWith("/products") && location.includes("featured=true") ? "deals" :
     location.startsWith("/products") ? "products" :
-    location.startsWith("/categories") ? "categories" :
-    location.startsWith("/deals") ? "deals" :
     "";
 
   return (
@@ -82,7 +81,7 @@ export default function Layout({ children }: LayoutProps) {
               </Link>
               
               {/* Desktop Navigation */}
-              <div className="hidden md:block">
+              <div className="hidden md:flex items-center gap-6">
                 <DynamicNavigation
                   links={navigationLinks}
                   backgroundColor="hsl(0, 0%, 100% / 0.5)"
@@ -92,6 +91,9 @@ export default function Layout({ children }: LayoutProps) {
                   className="border border-border/50"
                   activeLink={activeLink}
                   onLinkClick={handleLinkClick}
+                />
+                <CategoryDropdown 
+                  isActive={location.startsWith("/products") && location.includes("category")}
                 />
               </div>
             </div>
