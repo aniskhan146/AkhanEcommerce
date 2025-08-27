@@ -38,10 +38,10 @@ export class MemStorage implements IStorage {
   private initializeData() {
     // Initialize categories
     const categories = [
-      { name: "Laptops", icon: "fas fa-laptop", productCount: 25 },
-      { name: "Smartphones", icon: "fas fa-mobile-alt", productCount: 18 },
-      { name: "Audio", icon: "fas fa-headphones", productCount: 12 },
-      { name: "Gaming", icon: "fas fa-gamepad", productCount: 15 },
+      { name: "Laptops", icon: "fas fa-laptop", productCount: 0 },
+      { name: "Smartphones", icon: "fas fa-mobile-alt", productCount: 0 },
+      { name: "Audio", icon: "fas fa-headphones", productCount: 0 },
+      { name: "Gaming", icon: "fas fa-gamepad", productCount: 0 },
     ];
 
     categories.forEach(cat => {
@@ -111,6 +111,96 @@ export class MemStorage implements IStorage {
         category: "Smartphones",
         rating: "4.7",
         inStock: true
+      },
+      {
+        name: "ASUS ROG Zephyrus G14",
+        description: "Powerful gaming laptop with AMD Ryzen 9 processor and RTX 4060 graphics.",
+        price: "1599.00",
+        image: "https://images.unsplash.com/photo-1603302576837-37561b2e2302?ixlib=rb-4.0.3&auto=format&fit=crop&w=800&h=600",
+        category: "Laptops",
+        rating: "4.5",
+        inStock: true
+      },
+      {
+        name: "HP Spectre x360",
+        description: "Premium 2-in-1 laptop with Intel Core i7 and stunning OLED display.",
+        price: "1399.00",
+        image: "https://images.unsplash.com/photo-1525547719571-a2d4ac8945e2?ixlib=rb-4.0.3&auto=format&fit=crop&w=800&h=600",
+        category: "Laptops",
+        rating: "4.4",
+        inStock: true
+      },
+      {
+        name: "Google Pixel 8 Pro",
+        description: "AI-powered smartphone with exceptional camera and pure Android experience.",
+        price: "999.00",
+        image: "https://images.unsplash.com/photo-1511707171634-5f897ff02aa9?ixlib=rb-4.0.3&auto=format&fit=crop&w=800&h=600",
+        category: "Smartphones",
+        rating: "4.6",
+        inStock: true
+      },
+      {
+        name: "OnePlus 12",
+        description: "Flagship phone with Snapdragon 8 Gen 3 and ultra-fast charging.",
+        price: "799.00",
+        image: "https://images.unsplash.com/photo-1592750475338-74b7b21085ab?ixlib=rb-4.0.3&auto=format&fit=crop&w=800&h=600",
+        category: "Smartphones",
+        rating: "4.5",
+        inStock: true
+      },
+      {
+        name: "Bose QuietComfort Ultra",
+        description: "Premium wireless earbuds with world-class noise cancellation.",
+        price: "299.00",
+        image: "https://images.unsplash.com/photo-1590658268037-6bf12165a8df?ixlib=rb-4.0.3&auto=format&fit=crop&w=800&h=600",
+        category: "Audio",
+        rating: "4.8",
+        inStock: true
+      },
+      {
+        name: "Audio-Technica ATH-M50x",
+        description: "Professional studio monitor headphones for critical listening.",
+        price: "149.00",
+        image: "https://images.unsplash.com/photo-1484704849700-f032a568e944?ixlib=rb-4.0.3&auto=format&fit=crop&w=800&h=600",
+        category: "Audio",
+        rating: "4.7",
+        inStock: true
+      },
+      {
+        name: "JBL Charge 5",
+        description: "Portable Bluetooth speaker with powerful sound and long battery life.",
+        price: "179.00",
+        image: "https://images.unsplash.com/photo-1608043152269-423dbba4e7e1?ixlib=rb-4.0.3&auto=format&fit=crop&w=800&h=600",
+        category: "Audio",
+        rating: "4.6",
+        inStock: true
+      },
+      {
+        name: "Xbox Series X",
+        description: "Most powerful Xbox ever with 4K gaming and ultra-fast loading.",
+        price: "499.00",
+        image: "https://images.unsplash.com/photo-1621259182978-fbf93132d53d?ixlib=rb-4.0.3&auto=format&fit=crop&w=800&h=600",
+        category: "Gaming",
+        rating: "4.8",
+        inStock: true
+      },
+      {
+        name: "Nintendo Switch OLED",
+        description: "Handheld gaming console with vibrant OLED screen and versatile play modes.",
+        price: "349.00",
+        image: "https://images.unsplash.com/photo-1578662996442-48f60103fc96?ixlib=rb-4.0.3&auto=format&fit=crop&w=800&h=600",
+        category: "Gaming",
+        rating: "4.7",
+        inStock: true
+      },
+      {
+        name: "Razer DeathAdder V3",
+        description: "High-performance gaming mouse with Focus Pro 30K sensor.",
+        price: "99.00",
+        image: "https://images.unsplash.com/photo-1527814050087-3793815479db?ixlib=rb-4.0.3&auto=format&fit=crop&w=800&h=600",
+        category: "Gaming",
+        rating: "4.5",
+        inStock: true
       }
     ];
 
@@ -130,7 +220,16 @@ export class MemStorage implements IStorage {
   }
 
   async getCategories(): Promise<Category[]> {
-    return Array.from(this.categories.values());
+    const categories = Array.from(this.categories.values());
+    const products = Array.from(this.products.values());
+    
+    // Calculate real product counts for each category
+    return categories.map(category => ({
+      ...category,
+      productCount: products.filter(product => 
+        product.category.toLowerCase() === category.name.toLowerCase()
+      ).length
+    }));
   }
 
   async getCategoryById(id: string): Promise<Category | undefined> {
