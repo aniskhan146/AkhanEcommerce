@@ -29,6 +29,7 @@ export default function Layout({ children }: LayoutProps) {
     { id: "products", label: "Products", href: "/products" },
     { id: "categories", label: "Categories", href: "/products?category=all" },
     { id: "deals", label: "Deals", href: "/products?featured=true" },
+    { id: "profile", label: "Profile", href: "/profile" },
   ];
 
   const mobileMenuItems = [
@@ -36,6 +37,7 @@ export default function Layout({ children }: LayoutProps) {
     { label: "Products", href: "/products" },
     { label: "Categories", href: "/products?category=all" },
     { label: "Deals", href: "/products?featured=true" },
+    { label: "Profile", href: "/profile" },
     { label: "Cart", href: "/cart" },
   ];
 
@@ -60,6 +62,7 @@ export default function Layout({ children }: LayoutProps) {
     location.startsWith("/products") ? "products" :
     location.startsWith("/categories") ? "categories" :
     location.startsWith("/deals") ? "deals" :
+    location.startsWith("/profile") ? "profile" :
     "";
 
   return (
