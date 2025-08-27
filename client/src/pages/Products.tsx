@@ -59,9 +59,10 @@ export default function Products() {
   };
 
   const handleCategoryChange = (category: string) => {
-    setSelectedCategory(category);
+    const actualCategory = category === "all" ? "" : category;
+    setSelectedCategory(actualCategory);
     const params = new URLSearchParams();
-    if (category) params.append("category", category);
+    if (actualCategory) params.append("category", actualCategory);
     if (searchTerm) params.append("search", searchTerm);
     
     setLocation(`/products${params.toString() ? `?${params.toString()}` : ""}`);
@@ -77,6 +78,7 @@ export default function Products() {
         return a.name.localeCompare(b.name);
       case "rating":
         return parseFloat(b.rating || "0") - parseFloat(a.rating || "0");
+      case "default":
       default:
         return 0;
     }
@@ -119,12 +121,12 @@ export default function Products() {
 
           {/* Filter Controls */}
           <div className="flex flex-wrap gap-4">
-            <Select value={selectedCategory} onValueChange={handleCategoryChange}>
+            <Select value={selectedCategory || "all"} onValueChange={handleCategoryChange}>
               <SelectTrigger className="w-48" data-testid="select-category">
                 <SelectValue placeholder="All Categories" />
               </SelectTrigger>
               <SelectContent>
-                <SelectItem value="">All Categories</SelectItem>
+                <SelectItem value="all">All Categories</SelectItem>
                 {categories.map((category) => (
                   <SelectItem key={category.id} value={category.name}>
                     {category.name}
@@ -138,7 +140,7 @@ export default function Products() {
                 <SelectValue placeholder="Sort by" />
               </SelectTrigger>
               <SelectContent>
-                <SelectItem value="">Default</SelectItem>
+                <SelectItem value="default">Default</SelectItem>
                 <SelectItem value="price-low">Price: Low to High</SelectItem>
                 <SelectItem value="price-high">Price: High to Low</SelectItem>
                 <SelectItem value="name">Name</SelectItem>
