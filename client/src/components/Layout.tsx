@@ -12,7 +12,7 @@ interface LayoutProps {
 }
 
 export default function Layout({ children }: LayoutProps) {
-  const [location] = useLocation();
+  const [location, setLocation] = useLocation();
   const [isScrolled, setIsScrolled] = useState(false);
 
   useEffect(() => {
@@ -48,6 +48,9 @@ export default function Layout({ children }: LayoutProps) {
         if (element) {
           element.scrollIntoView({ behavior: "smooth" });
         }
+      } else {
+        // Navigate to the page using router
+        setLocation(link.href);
       }
     }
   };

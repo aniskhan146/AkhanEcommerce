@@ -13,7 +13,12 @@ export default function Home() {
   const { addToCart, isAddingToCart } = useCart();
 
   const { data: featuredProducts = [], isLoading: productsLoading } = useQuery<Product[]>({
-    queryKey: ["/api/products", { featured: "true" }],
+    queryKey: ["/api/products", "featured", "true"],
+    queryFn: async () => {
+      const response = await fetch("/api/products?featured=true");
+      if (!response.ok) throw new Error("Failed to fetch featured products");
+      return response.json();
+    },
   });
 
   const { data: categories = [], isLoading: categoriesLoading } = useQuery<Category[]>({
