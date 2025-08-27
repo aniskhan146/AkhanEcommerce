@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { useQuery } from "@tanstack/react-query";
-import { Link } from "wouter";
+import { Link, useLocation } from "wouter";
 import { ChevronDown } from "lucide-react";
 import { cn } from "@/lib/utils";
 import type { Category } from "@shared/schema";
@@ -12,10 +12,17 @@ interface CategoryDropdownProps {
 
 export default function CategoryDropdown({ className, isActive }: CategoryDropdownProps) {
   const [isOpen, setIsOpen] = useState(false);
+  const [, setLocation] = useLocation();
 
   const { data: categories = [] } = useQuery<Category[]>({
     queryKey: ["/api/categories"],
   });
+
+  const handleCategoryClick = (href: string, e: React.MouseEvent) => {
+    e.preventDefault();
+    setIsOpen(false);
+    setLocation(href);
+  };
 
   return (
     <div 
@@ -49,43 +56,44 @@ export default function CategoryDropdown({ className, isActive }: CategoryDropdo
             </div>
             <div className="space-y-1">
               {/* All Categories Link */}
-              <Link href="/products" className="block">
-                <div className="flex items-center gap-3 px-3 py-2 rounded-lg hover:bg-secondary transition-colors cursor-pointer group">
-                  <div className="w-8 h-8 bg-gradient-to-br from-accent to-accent/70 rounded-lg flex items-center justify-center">
-                    <i className="fas fa-th-large text-white text-sm"></i>
+              <div 
+                className="flex items-center gap-3 px-3 py-2 rounded-lg hover:bg-secondary transition-colors cursor-pointer group"
+                onClick={(e) => handleCategoryClick("/products", e)}
+                data-testid="category-all-products"
+              >
+                <div className="w-8 h-8 bg-gradient-to-br from-accent to-accent/70 rounded-lg flex items-center justify-center">
+                  <i className="fas fa-th-large text-white text-sm"></i>
+                </div>
+                <div>
+                  <div className="font-medium text-sm group-hover:text-accent transition-colors">
+                    All Products
                   </div>
-                  <div>
-                    <div className="font-medium text-sm group-hover:text-accent transition-colors">
-                      All Products
-                    </div>
-                    <div className="text-xs text-muted-foreground">
-                      Browse everything
-                    </div>
+                  <div className="text-xs text-muted-foreground">
+                    Browse everything
                   </div>
                 </div>
-              </Link>
+              </div>
               
               {/* Individual Categories */}
               {categories.map((category) => (
-                <Link 
-                  key={category.id} 
-                  href={`/products?category=${encodeURIComponent(category.name)}`}
-                  className="block"
+                <div 
+                  key={category.id}
+                  className="flex items-center gap-3 px-3 py-2 rounded-lg hover:bg-secondary transition-colors cursor-pointer group"
+                  onClick={(e) => handleCategoryClick(`/products?category=${encodeURIComponent(category.name)}`, e)}
+                  data-testid={`category-${category.name.toLowerCase()}`}
                 >
-                  <div className="flex items-center gap-3 px-3 py-2 rounded-lg hover:bg-secondary transition-colors cursor-pointer group">
-                    <div className="w-8 h-8 bg-gradient-to-br from-accent to-accent/70 rounded-lg flex items-center justify-center">
-                      <i className={cn(category.icon, "text-white text-sm")}></i>
+                  <div className="w-8 h-8 bg-gradient-to-br from-accent to-accent/70 rounded-lg flex items-center justify-center">
+                    <i className={cn(category.icon, "text-white text-sm")}></i>
+                  </div>
+                  <div>
+                    <div className="font-medium text-sm group-hover:text-accent transition-colors">
+                      {category.name}
                     </div>
-                    <div>
-                      <div className="font-medium text-sm group-hover:text-accent transition-colors">
-                        {category.name}
-                      </div>
-                      <div className="text-xs text-muted-foreground">
-                        {category.productCount}+ Products
-                      </div>
+                    <div className="text-xs text-muted-foreground">
+                      {category.productCount}+ Products
                     </div>
                   </div>
-                </Link>
+                </div>
               ))}
             </div>
           </div>
