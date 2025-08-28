@@ -1,4 +1,4 @@
-import { type Category, type Product, type CartItem, type InsertCategory, type InsertProduct, type InsertCartItem, type CartItemWithProduct } from "@shared/schema";
+import { type Category, type Product, type CartItem, type User, type InsertCategory, type InsertProduct, type InsertCartItem, type InsertUser, type CartItemWithProduct } from "@shared/schema";
 import { randomUUID } from "crypto";
 
 export interface IStorage {
@@ -21,21 +21,49 @@ export interface IStorage {
   updateCartItemQuantity(sessionId: string, productId: string, quantity: number): Promise<CartItem | undefined>;
   removeFromCart(sessionId: string, productId: string): Promise<void>;
   clearCart(sessionId: string): Promise<void>;
+
+  // Users
+  getUserByUsername(username: string): Promise<User | undefined>;
+  getUserById(id: string): Promise<User | undefined>;
+  createUser(user: InsertUser): Promise<User>;
+  updateUser(id: string, user: Partial<InsertUser>): Promise<User | undefined>;
 }
 
 export class MemStorage implements IStorage {
   private categories: Map<string, Category>;
   private products: Map<string, Product>;
   private cartItems: Map<string, CartItem>;
+  private users: Map<string, User>;
 
   constructor() {
     this.categories = new Map();
     this.products = new Map();
     this.cartItems = new Map();
+    this.users = new Map();
     this.initializeData();
   }
 
   private initializeData() {
+    // Initialize users with default admin
+    const adminUser: User = {
+      id: randomUUID(),
+      username: "admin",
+      name: "Administrator",
+      email: "admin@example.com",
+      password: "admin123", // In production, this should be hashed
+      role: "admin",
+      phone: null,
+      address: null,
+      city: null,
+      country: null,
+      zipCode: null,
+      avatar: null,
+      isActive: true,
+      createdAt: new Date(),
+      updatedAt: new Date(),
+    };
+    this.users.set(adminUser.id, adminUser);
+
     // Initialize categories
     const categories = [
       { name: "Laptops", icon: "fas fa-laptop", productCount: 0 },
@@ -360,6 +388,42 @@ export class MemStorage implements IStorage {
     itemsToDelete.forEach(item => {
       this.cartItems.delete(item.id);
     });
+  }
+
+  // User methods
+  async getUserByUsername(username: string): Promise<User | undefined> {
+    return Array.from(this.users.values()).find(user => user.username === username);
+  }
+
+  async getUserById(id: string): Promise<User | undefined> {
+    return this.users.get(id);
+  }
+
+  async createUser(insertUser: InsertUser): Promise<User> {
+    const id = randomUUID();
+    const user: User = {
+      ...insertUser,
+      id,
+      role: insertUser.role || "user",
+      isActive: insertUser.isActive ?? true,
+      createdAt: new Date(),
+      updatedAt: new Date(),
+    };
+    this.users.set(id, user);
+    return user;
+  }
+
+  async updateUser(id: string, updateData: Partial<InsertUser>): Promise<User | undefined> {
+    const user = this.users.get(id);
+    if (!user) return undefined;
+
+    const updatedUser: User = {
+      ...user,
+      ...updateData,
+      updatedAt: new Date(),
+    };
+    this.users.set(id, updatedUser);
+    return updatedUser;
   }
 }
 
