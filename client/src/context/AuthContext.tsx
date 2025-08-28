@@ -21,7 +21,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const { data: userData, isLoading } = useQuery({
     queryKey: ["/api/auth/me"],
     retry: false,
-    enabled: !!localStorage.getItem('sessionId'),
+    enabled: typeof window !== 'undefined' && !!localStorage.getItem('sessionId'),
     queryFn: async () => {
       const sessionId = localStorage.getItem('sessionId');
       if (!sessionId) return null;
@@ -48,8 +48,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   }, [userData]);
 
   const loginMutation = useMutation({
-    mutationFn: async (credentials: LoginRequest) => {
-      const response = await fetch('/api/auth/login', {
+    mutationFn: async (credentials: any) => {
+      const response = await fetch('/api/auth/user-login', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(credentials),
@@ -101,7 +101,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     },
   });
 
-  const login = async (credentials: LoginRequest) => {
+  const login = async (credentials: any) => {
     await loginMutation.mutateAsync(credentials);
   };
 

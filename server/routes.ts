@@ -1,7 +1,7 @@
 import type { Express } from "express";
 import { createServer, type Server } from "http";
 import { storage } from "./storage";
-import { insertCartItemSchema, loginSchema, registerSchema } from "@shared/schema";
+import { insertCartItemSchema, loginSchema, userLoginSchema, registerSchema } from "@shared/schema";
 import { randomUUID } from "crypto";
 
 // Simple session storage (in production, use Redis or database)
@@ -41,6 +41,31 @@ export async function registerRoutes(app: Express): Promise<Server> {
       
       const user = await storage.getUserByUsername(username);
       if (!user || user.password !== password || !user.isActive) {
+        return res.status(401).json({ message: "Invalid credentials" });
+      }
+
+      // Create session
+      const sessionId = randomUUID();
+      const expires = new Date(Date.now() + 24 * 60 * 60 * 1000); // 24 hours
+      sessions.set(sessionId, { userId: user.id, expires });
+
+      // Return user without password
+      const { password: _, ...userWithoutPassword } = user;
+      res.json({ user: userWithoutPassword, sessionId });
+    } catch (error) {
+      res.status(400).json({ message: "Invalid request data" });
+    }
+  });
+
+  app.post("/api/auth/user-login", async (req, res) => {
+    try {
+      const { email, password } = userLoginSchema.parse(req.body);
+      
+      // Find user by email
+      const users = Array.from((storage as any).users.values());
+      const user = users.find(u => u.email === email);
+      
+      if (!user || user.password !== password || !user.isActive || user.role === 'admin') {
         return res.status(401).json({ message: "Invalid credentials" });
       }
 

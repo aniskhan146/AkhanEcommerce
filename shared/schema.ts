@@ -76,6 +76,11 @@ export const loginSchema = z.object({
   password: z.string().min(1, "Password is required"),
 });
 
+export const userLoginSchema = z.object({
+  email: z.string().email("Valid email is required"),
+  password: z.string().min(1, "Password is required"),
+});
+
 export const registerSchema = insertUserSchema.extend({
   password: z.string().min(6, "Password must be at least 6 characters"),
   confirmPassword: z.string(),
@@ -93,6 +98,7 @@ export type InsertProduct = z.infer<typeof insertProductSchema>;
 export type InsertCartItem = z.infer<typeof insertCartItemSchema>;
 export type InsertUser = z.infer<typeof insertUserSchema>;
 export type LoginRequest = z.infer<typeof loginSchema>;
+export type UserLoginRequest = z.infer<typeof userLoginSchema>;
 export type RegisterRequest = z.infer<typeof registerSchema>;
 
 export interface CartItemWithProduct extends CartItem {

@@ -13,10 +13,10 @@ import { useToast } from "@/hooks/use-toast";
 import { useAuth } from "@/context/AuthContext";
 import { apiRequest } from "@/lib/queryClient";
 import { User, Edit, MapPin, Phone, Mail, Calendar, CreditCard, Package, Heart, LogIn, UserPlus, Shield } from "lucide-react";
-import type { User as UserType, InsertUser, LoginRequest } from "@shared/schema";
+import type { User as UserType, InsertUser, UserLoginRequest } from "@shared/schema";
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
-import { loginSchema, registerSchema } from "@shared/schema";
+import { userLoginSchema, registerSchema } from "@shared/schema";
 import { cn } from "@/lib/utils";
 
 export default function Profile() {
@@ -27,12 +27,12 @@ export default function Profile() {
   const queryClient = useQueryClient();
   const { user, isAuthenticated, isLoading, login, logout, register } = useAuth();
 
-  // Login form
-  const loginForm = useForm<LoginRequest>({
-    resolver: zodResolver(loginSchema),
+  // Login form for regular users (email/password)
+  const loginForm = useForm<UserLoginRequest>({
+    resolver: zodResolver(userLoginSchema),
     defaultValues: {
-      username: "admin",
-      password: "admin123",
+      email: "",
+      password: "",
     },
   });
 
@@ -49,10 +49,10 @@ export default function Profile() {
     },
   });
 
-  const handleLogin = async (data: LoginRequest) => {
+  const handleLogin = async (data: UserLoginRequest) => {
     try {
       // Store session token
-      const response = await fetch('/api/auth/login', {
+      const response = await fetch('/api/auth/user-login', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(data),
@@ -65,7 +65,7 @@ export default function Profile() {
       const result = await response.json();
       localStorage.setItem('sessionId', result.sessionId);
       
-      await login(data);
+      await login(data as any);
       
       toast({
         title: "Welcome!",
@@ -74,7 +74,7 @@ export default function Profile() {
     } catch (error) {
       toast({
         title: "Login Failed",
-        description: "Invalid username or password.",
+        description: "Invalid email or password.",
         variant: "destructive",
       });
     }
@@ -134,12 +134,12 @@ export default function Profile() {
                   <form onSubmit={loginForm.handleSubmit(handleLogin)} className="space-y-4">
                     <FormField
                       control={loginForm.control}
-                      name="username"
+                      name="email"
                       render={({ field }) => (
                         <FormItem>
-                          <FormLabel>Username</FormLabel>
+                          <FormLabel>Email</FormLabel>
                           <FormControl>
-                            <Input {...field} data-testid="input-username" />
+                            <Input type="email" {...field} data-testid="input-email" />
                           </FormControl>
                           <FormMessage />
                         </FormItem>
@@ -255,9 +255,8 @@ export default function Profile() {
 
               {showLogin && (
                 <div className="text-center text-sm text-muted-foreground">
-                  <p>Default admin credentials:</p>
-                  <p><strong>Username:</strong> admin</p>
-                  <p><strong>Password:</strong> admin123</p>
+                  <p>Use your email and password to login.</p>
+                  <p>New here? <strong>Register</strong> to create an account.</p>
                 </div>
               )}
             </CardContent>
@@ -342,21 +341,12 @@ export default function Profile() {
         {/* Header */}
         <div className="mb-8 flex justify-between items-center">
           <div>
-            <h1 className="text-4xl font-bold mb-4 flex items-center space-x-3">
-              <span>Profile Settings</span>
-              {user?.role === 'admin' && <Badge variant="destructive"><Shield className="h-3 w-3 mr-1" />Admin</Badge>}
-            </h1>
+            <h1 className="text-4xl font-bold mb-4">Profile Settings</h1>
             <p className="text-xl text-muted-foreground">
               Manage your account settings and preferences
             </p>
           </div>
           <div className="flex space-x-3">
-            {user?.role === 'admin' && (
-              <Button variant="outline" onClick={() => window.location.href = '/admin'} data-testid="button-admin-panel">
-                <Shield className="h-4 w-4 mr-2" />
-                Admin Panel
-              </Button>
-            )}
             <Button variant="outline" onClick={handleLogout} data-testid="button-logout">
               <LogIn className="h-4 w-4 mr-2" />
               Logout
@@ -383,18 +373,10 @@ export default function Profile() {
                   <div>
                     <CardTitle className="text-2xl">{user?.name}</CardTitle>
                     <CardDescription className="text-lg">{user?.email}</CardDescription>
-                    <div className="flex space-x-2 mt-2">
-                      <Badge variant="secondary">
-                        <Calendar className="h-3 w-3 mr-1" />
-                        Member since {user?.createdAt ? new Date(user.createdAt).toLocaleDateString() : "Unknown"}
-                      </Badge>
-                      {user?.role === 'admin' && (
-                        <Badge variant="destructive">
-                          <Shield className="h-3 w-3 mr-1" />
-                          Admin
-                        </Badge>
-                      )}
-                    </div>
+                    <Badge variant="secondary" className="mt-2">
+                      <Calendar className="h-3 w-3 mr-1" />
+                      Member since {user?.createdAt ? new Date(user.createdAt).toLocaleDateString() : "Unknown"}
+                    </Badge>
                   </div>
                 </div>
                 <Button

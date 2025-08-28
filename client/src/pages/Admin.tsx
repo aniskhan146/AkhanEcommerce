@@ -1,11 +1,17 @@
 import { useState } from "react";
-import { useQuery } from "@tanstack/react-query";
+import { useQuery, useMutation } from "@tanstack/react-query";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { useAuth } from "@/context/AuthContext";
-import { useLocation } from "wouter";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
+import { Form, FormControl, FormField, FormItem, FormLabel, FormMessage } from "@/components/ui/form";
+import { useToast } from "@/hooks/use-toast";
+import { useForm } from "react-hook-form";
+import { zodResolver } from "@hookform/resolvers/zod";
+import { loginSchema } from "@shared/schema";
+import type { LoginRequest } from "@shared/schema";
 import { 
   Users, 
   Package, 
@@ -13,25 +19,145 @@ import {
   TrendingUp, 
   Activity,
   Settings,
-  Shield
+  Shield,
+  LogIn,
+  LogOut
 } from "lucide-react";
 
 export default function Admin() {
-  const { user, isAuthenticated, isLoading } = useAuth();
-  const [, setLocation] = useLocation();
+  const [isLoggedIn, setIsLoggedIn] = useState(false);
+  const [adminUser, setAdminUser] = useState<any>(null);
+  const { toast } = useToast();
 
-  // Redirect if not authenticated or not admin
-  if (!isLoading && (!isAuthenticated || user?.role !== 'admin')) {
-    setLocation('/profile');
-    return null;
+  // Admin login form
+  const loginForm = useForm<LoginRequest>({
+    resolver: zodResolver(loginSchema),
+    defaultValues: {
+      username: "admin",
+      password: "admin123",
+    },
+  });
+
+  const handleAdminLogin = async (data: LoginRequest) => {
+    try {
+      const response = await fetch('/api/auth/login', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(data),
+      });
+      
+      if (!response.ok) throw new Error('Login failed');
+      const result = await response.json();
+      
+      if (result.user.role !== 'admin') {
+        throw new Error('Admin access required');
+      }
+      
+      localStorage.setItem('adminSessionId', result.sessionId);
+      setAdminUser(result.user);
+      setIsLoggedIn(true);
+      
+      toast({
+        title: "Admin Login Successful",
+        description: "Welcome to the admin panel.",
+      });
+    } catch (error) {
+      toast({
+        title: "Login Failed",
+        description: "Invalid admin credentials or insufficient permissions.",
+        variant: "destructive",
+      });
+    }
+  };
+
+  const handleAdminLogout = () => {
+    localStorage.removeItem('adminSessionId');
+    setAdminUser(null);
+    setIsLoggedIn(false);
+    toast({
+      title: "Logged Out",
+      description: "You have been logged out from admin panel.",
+    });
+  };
+
+  // Show admin login form if not logged in
+  if (!isLoggedIn) {
+    return (
+      <div className="min-h-screen bg-background flex items-center justify-center">
+        <Card className="w-full max-w-md">
+          <CardHeader className="text-center">
+            <CardTitle className="text-2xl flex items-center justify-center space-x-2">
+              <Shield className="h-6 w-6 text-destructive" />
+              <span>Admin Panel</span>
+            </CardTitle>
+            <CardDescription>
+              Enter admin credentials to access the panel
+            </CardDescription>
+          </CardHeader>
+          <CardContent>
+            <Form {...loginForm}>
+              <form onSubmit={loginForm.handleSubmit(handleAdminLogin)} className="space-y-4">
+                <FormField
+                  control={loginForm.control}
+                  name="username"
+                  render={({ field }) => (
+                    <FormItem>
+                      <FormLabel>Admin Username</FormLabel>
+                      <FormControl>
+                        <Input {...field} data-testid="input-admin-username" />
+                      </FormControl>
+                      <FormMessage />
+                    </FormItem>
+                  )}
+                />
+                <FormField
+                  control={loginForm.control}
+                  name="password"
+                  render={({ field }) => (
+                    <FormItem>
+                      <FormLabel>Admin Password</FormLabel>
+                      <FormControl>
+                        <Input type="password" {...field} data-testid="input-admin-password" />
+                      </FormControl>
+                      <FormMessage />
+                    </FormItem>
+                  )}
+                />
+                <Button type="submit" className="w-full" data-testid="button-admin-login">
+                  <LogIn className="h-4 w-4 mr-2" />
+                  Login to Admin Panel
+                </Button>
+              </form>
+            </Form>
+            
+            <div className="text-center text-sm text-muted-foreground mt-4">
+              <p>Admin credentials:</p>
+              <p><strong>Username:</strong> admin</p>
+              <p><strong>Password:</strong> admin123</p>
+            </div>
+          </CardContent>
+        </Card>
+      </div>
+    );
   }
 
   const { data: dashboardData, isLoading: isDashboardLoading } = useQuery({
     queryKey: ["/api/admin/dashboard"],
-    enabled: isAuthenticated && user?.role === 'admin',
+    enabled: isLoggedIn,
+    queryFn: async () => {
+      const sessionId = localStorage.getItem('adminSessionId');
+      const response = await fetch('/api/admin/dashboard', {
+        headers: {
+          'Authorization': `Bearer ${sessionId}`
+        }
+      });
+      
+      if (!response.ok) throw new Error('Failed to fetch dashboard data');
+      return response.json();
+    },
   });
 
-  if (isLoading || isDashboardLoading) {
+  if (isDashboardLoading) {
     return (
       <div className="min-h-screen bg-background pt-20 flex items-center justify-center">
         <div className="text-center">
@@ -52,8 +178,14 @@ export default function Admin() {
             <h1 className="text-4xl font-bold">Admin Panel</h1>
           </div>
           <p className="text-xl text-muted-foreground">
-            Welcome back, {user?.name}. Here's what's happening with your store.
+            Welcome back, {adminUser?.name}. Here's what's happening with your store.
           </p>
+          <div className="mt-4">
+            <Button variant="outline" onClick={handleAdminLogout} data-testid="button-admin-logout">
+              <LogOut className="h-4 w-4 mr-2" />
+              Logout from Admin Panel
+            </Button>
+          </div>
         </div>
 
         {/* Stats Cards */}
@@ -247,15 +379,15 @@ export default function Admin() {
                     <div className="space-y-2">
                       <div className="flex justify-between">
                         <span className="text-muted-foreground">Username:</span>
-                        <Badge variant="secondary">{user?.username}</Badge>
+                        <Badge variant="secondary">{adminUser?.username}</Badge>
                       </div>
                       <div className="flex justify-between">
                         <span className="text-muted-foreground">Role:</span>
-                        <Badge variant="default">{user?.role}</Badge>
+                        <Badge variant="destructive">{adminUser?.role}</Badge>
                       </div>
                       <div className="flex justify-between">
                         <span className="text-muted-foreground">Email:</span>
-                        <span>{user?.email}</span>
+                        <span>{adminUser?.email}</span>
                       </div>
                     </div>
                   </div>
